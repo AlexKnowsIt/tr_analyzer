@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Portfolio Analyzer</title>
+  </head>
+  <body>
+    <h1>Portfolio Analyzer</h1>
+    <h2>Allocation by Sector</h2>
+    <div>{{ sunburst_sector|safe }}</div>
+    <h2>Allocation by Country</h2>
+    <div>{{ sunburst_country|safe }}</div>
+    <h2>Efficient Frontier</h2>
+    <div>{{ ef_plot|safe }}</div>
+    <h2>Optimierung</h2>
+    <form method="post">
+      <label for="constraints">Constraints (z.B. "ISIN<=0.2,ISIN>=0.1"):</label>
+      <input type="text" id="constraints" name="constraints" value="{{ constraints }}" />
+      <button type="submit">Optimieren</button>
+    </form>
+    <div>{{ weights_table|safe }}</div>
+    <div>{{ perf_html|safe }}</div>
+  </body>
+</html>
