@@ -14,3 +14,23 @@ def test_download_portfolio_requires_key(monkeypatch):
     monkeypatch.setattr(cli, "Portfolio", DummyPortfolio)
     with pytest.raises(RuntimeError):
         cli.download_portfolio("123", "456")
+
+
+def test_pair_device(monkeypatch):
+    class DummyPairApi:
+        def __init__(self, *args, **kwargs):
+            self.initiated = False
+            self.token = None
+
+        def initiate_device_reset(self):
+            self.initiated = True
+
+        def complete_device_reset(self, token):
+            self.token = token
+
+    dummy = DummyPairApi()
+    monkeypatch.setattr(cli, "TradeRepublicApi", lambda *a, **kw: dummy)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "123456")
+    cli.pair_device("123", "456")
+    assert dummy.initiated
+    assert dummy.token == "123456"
