@@ -22,6 +22,10 @@ def download_portfolio(phone: str, pin: str, output: str = "portfolio.csv") -> P
         Path to the CSV file that will be written.
     """
     tr = TradeRepublicApi(phone_no=phone, pin=pin)
+    if not hasattr(tr, "sk"):
+        raise RuntimeError(
+            "Signing key not found. Pair your device with TradeRepublic to generate the key file."
+        )
     tr.login()
     pf = Portfolio(tr)
     asyncio.run(pf.portfolio_loop())
