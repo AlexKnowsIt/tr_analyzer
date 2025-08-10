@@ -1,2 +1,8 @@
 __pycache__/
 portfolio.csv
+Include/
+Lib/
+Scripts/
+share/
+etc/
+*.cfg
