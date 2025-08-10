@@ -42,7 +42,13 @@ def pair_device(phone: str, pin: str) -> None:
     the default location used by ``pytr`` (``~/.pytr/keyfile.pem``).
     """
     tr = TradeRepublicApi(phone_no=phone, pin=pin)
-    tr.initiate_device_reset()
+    try:
+        tr.initiate_device_reset()
+    except KeyError as exc:
+        raise RuntimeError(
+            "Failed to initiate device reset; the TradeRepublic API response"
+            " was missing a 'processId'."
+        ) from exc
     token = input("Enter the pairing code sent by TradeRepublic: ")
     tr.complete_device_reset(token)
 

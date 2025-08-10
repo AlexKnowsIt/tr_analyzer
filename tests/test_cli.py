@@ -34,3 +34,16 @@ def test_pair_device(monkeypatch):
     cli.pair_device("123", "456")
     assert dummy.initiated
     assert dummy.token == "123456"
+
+
+def test_pair_device_handles_missing_process_id(monkeypatch):
+    class FailingPairApi:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def initiate_device_reset(self):
+            raise KeyError("processId")
+
+    monkeypatch.setattr(cli, "TradeRepublicApi", lambda *a, **kw: FailingPairApi())
+    with pytest.raises(RuntimeError):
+        cli.pair_device("123", "456")

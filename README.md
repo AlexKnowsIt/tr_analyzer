@@ -29,6 +29,9 @@ Der Befehl startet den Kopplungsprozess und fordert dich auf, den Code
 einzugeben, den TradeRepublic an dein registriertes Gerät sendet. Nach
 erfolgreicher Eingabe ist der Signing-Key gespeichert und das Portfolio kann
 heruntergeladen werden.
+Falls während der Kopplung eine Fehlermeldung zum fehlenden "processId"
+auftaucht, sind möglicherweise Telefonnummer oder PIN falsch oder die
+TradeRepublic-Schnittstelle hat das Format geändert.
 
 ## Portfolio herunterladen
 
