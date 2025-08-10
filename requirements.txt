@@ -1,0 +1,7 @@
+pytr
+yfinance
+PyPortfolioOpt
+plotly
+flask
+pandas
+numpy
