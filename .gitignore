@@ -1,5 +1,6 @@
 __pycache__/
 portfolio.csv
+.deps/
 Include/
 Lib/
 Scripts/
