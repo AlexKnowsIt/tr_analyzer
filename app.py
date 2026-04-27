@@ -15,9 +15,11 @@ from optimizer import (
     VALID_CATEGORIES,
     build_sector_constraints,
     classify_asset,
+    compute_frontier,
     compute_performance,
     parse_constraints,
     run_optimization,
+    simulate_savings_plan,
 )
 from pytr.api import TradeRepublicApi
 from pytr.portfolio import Portfolio
@@ -329,6 +331,127 @@ def api_upload():
     df.to_csv(PORTFOLIO_FILE, sep=";", index=False)
     _price_cache.clear()
     return jsonify({"status": "ok", "count": len(df)})
+
+
+BENCHMARK_TICKERS = {
+    "MSCI World": "IWDA.AS",
+    "DAX": "^GDAXI",
+    "S&P 500": "^GSPC",
+}
+
+
+@app.route("/api/benchmark")
+def api_benchmark():
+    ticker = request.args.get("ticker", "IWDA.AS")
+    period = request.args.get("period", "5y")
+    try:
+        prices = _fetch_prices([ticker])
+        col = prices.columns[0]
+        series = prices[col].dropna()
+        returns = series.pct_change().dropna()
+        cum = (1 + returns).cumprod() - 1
+    except Exception as e:
+        return jsonify({"error": str(e)}), 422
+
+    name = next((k for k, v in BENCHMARK_TICKERS.items() if v == ticker), ticker)
+    return jsonify({
+        "dates": [d.strftime("%Y-%m-%d") for d in returns.index],
+        "cumulative_return": [float(v) for v in cum],
+        "name": name,
+    })
+
+
+@app.route("/api/frontier", methods=["POST"])
+def api_frontier():
+    df = _load_portfolio()
+    if df is None:
+        return jsonify({"error": "no_portfolio"}), 404
+
+    body = request.get_json(force=True) or {}
+    current_weights = body.get("current_weights")
+    opt_weights = body.get("opt_weights")
+
+    tickers = df["ISIN"].tolist()
+    try:
+        prices = _fetch_prices(tickers)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 422
+
+    prices = prices.reindex(columns=tickers).dropna()
+    if prices.empty:
+        return jsonify({"error": "no_price_data"}), 422
+
+    try:
+        from pypfopt import expected_returns, risk_models
+        result = compute_frontier(prices)
+        mu = expected_returns.mean_historical_return(prices)
+        S = risk_models.sample_cov(prices)
+        S_arr = S.values
+        mu_arr = mu.values
+        import numpy as np
+        for label, weights_dict in [("current", current_weights), ("optimized", opt_weights)]:
+            if weights_dict:
+                w = pd.Series(weights_dict).reindex(prices.columns).fillna(0.0).values
+                w = w / w.sum() if w.sum() > 0 else w
+                result[label] = {
+                    "vol": float(np.sqrt(w @ S_arr @ w)),
+                    "ret": float(w @ mu_arr),
+                }
+    except Exception as e:
+        return jsonify({"error": str(e)}), 422
+
+    return jsonify(result)
+
+
+@app.route("/api/simulation", methods=["POST"])
+def api_simulation():
+    body = request.get_json(force=True) or {}
+
+    monthly_amount = float(body.get("monthly_amount", 500))
+    years = int(body.get("years", 20))
+    annual_savings_increase = float(body.get("annual_savings_increase", 0.0))
+    inflation_rate = float(body.get("inflation_rate", 0.02))
+    tax_rate = float(body.get("tax_rate", 0.26375))
+
+    annual_return = body.get("annual_return")
+    annual_volatility = body.get("annual_volatility")
+
+    if annual_return is None or annual_volatility is None:
+        df = _load_portfolio()
+        if df is not None:
+            try:
+                tickers = df["ISIN"].tolist()
+                prices = _fetch_prices(tickers)
+                prices = prices.reindex(columns=tickers).dropna()
+                total = float(df["netValue"].sum())
+                weights = {row["ISIN"]: float(row["netValue"]) / total for _, row in df.iterrows()}
+                perf = compute_performance(prices, weights)
+                if annual_return is None:
+                    annual_return = perf["cagr"]
+                if annual_volatility is None:
+                    annual_volatility = perf["volatility"]
+            except Exception:
+                pass
+
+    annual_return = float(annual_return) if annual_return is not None else 0.07
+    annual_volatility = float(annual_volatility) if annual_volatility is not None else 0.15
+
+    try:
+        result = simulate_savings_plan(
+            monthly_amount=monthly_amount,
+            years=years,
+            annual_return=annual_return,
+            annual_volatility=annual_volatility,
+            annual_savings_increase=annual_savings_increase,
+            inflation_rate=inflation_rate,
+            tax_rate=tax_rate,
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 422
+
+    result["annual_return_used"] = annual_return
+    result["annual_volatility_used"] = annual_volatility
+    return jsonify(result)
 
 
 if __name__ == "__main__":

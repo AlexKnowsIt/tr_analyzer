@@ -151,3 +151,100 @@ def compute_performance(price_data: pd.DataFrame, weights: Dict[str, float]) -> 
         "max_drawdown": max_drawdown,
         "sharpe": sharpe,
     }
+
+
+def compute_frontier(price_data: pd.DataFrame, n: int = 500) -> Dict:
+    mu = expected_returns.mean_historical_return(price_data)
+    S = risk_models.sample_cov(price_data)
+    S_arr = S.values
+    n_assets = len(mu)
+    mu_arr = mu.values
+
+    rng = np.random.default_rng(42)
+    rets, vols, sharpes = [], [], []
+    for _ in range(n):
+        w = rng.dirichlet(np.ones(n_assets))
+        r = float(w @ mu_arr)
+        v = float(np.sqrt(w @ S_arr @ w))
+        rets.append(r)
+        vols.append(v)
+        sharpes.append(r / v if v > 0 else 0.0)
+
+    frontier_rets, frontier_vols = [], []
+    try:
+        min_ret = float(mu_arr.min()) * 1.01
+        max_ret = float(mu_arr.max()) * 0.99
+        for target in np.linspace(min_ret, max_ret, 30):
+            try:
+                ef = EfficientFrontier(mu, S)
+                ef.efficient_return(target)
+                w = np.array(list(ef.clean_weights().values()))
+                frontier_vols.append(float(np.sqrt(w @ S_arr @ w)))
+                frontier_rets.append(float(target))
+            except (OptimizationError, Exception):
+                pass
+    except Exception:
+        pass
+
+    return {
+        "returns": rets,
+        "vols": vols,
+        "sharpes": sharpes,
+        "frontier_returns": frontier_rets,
+        "frontier_vols": frontier_vols,
+    }
+
+
+def simulate_savings_plan(
+    monthly_amount: float,
+    years: int,
+    annual_return: float,
+    annual_volatility: float,
+    annual_savings_increase: float = 0.0,
+    inflation_rate: float = 0.02,
+    tax_rate: float = 0.26375,
+) -> Dict:
+    monthly_base = (1 + annual_return) ** (1 / 12) - 1
+    monthly_bull = (1 + annual_return + annual_volatility) ** (1 / 12) - 1
+    monthly_bear = (1 + max(annual_return - annual_volatility, -0.5)) ** (1 / 12) - 1
+
+    years_list = list(range(1, years + 1))
+    invested = []
+    base_gross, bull_gross, bear_gross = [], [], []
+    base_net, real_value = [], []
+    monthly_amounts = []
+
+    val_base = val_bull = val_bear = 0.0
+    total_invested = 0.0
+
+    for yr in range(1, years + 1):
+        amt = monthly_amount * (1 + annual_savings_increase) ** (yr - 1)
+        monthly_amounts.append(round(amt, 2))
+        for _ in range(12):
+            val_base = val_base * (1 + monthly_base) + amt
+            val_bull = val_bull * (1 + monthly_bull) + amt
+            val_bear = val_bear * (1 + monthly_bear) + amt
+            total_invested += amt
+
+        invested.append(round(total_invested, 2))
+        base_gross.append(round(val_base, 2))
+        bull_gross.append(round(val_bull, 2))
+        bear_gross.append(round(val_bear, 2))
+
+        gains = max(val_base - total_invested, 0.0)
+        net = val_base - gains * tax_rate
+        base_net.append(round(net, 2))
+
+        deflator = (1 + inflation_rate) ** yr
+        real_value.append(round(net / deflator, 2))
+
+    return {
+        "years_list": years_list,
+        "invested": invested,
+        "base_gross": base_gross,
+        "bull_gross": bull_gross,
+        "bear_gross": bear_gross,
+        "base_net": base_net,
+        "real_value": real_value,
+        "monthly_amounts": monthly_amounts,
+    }

@@ -26,7 +26,13 @@
     .metric-card { text-align: center; }
     .metric-card .value { font-size: 1.6rem; font-weight: 700; }
     .metric-card .label { font-size: 0.78rem; color: #aaa; text-transform: uppercase; letter-spacing: 0.05em; }
-    #chart-perf, #chart-sharpe, #chart-sector, #chart-region, #chart-corr, #chart-weights { min-height: 320px; }
+    #chart-perf, #chart-sharpe, #chart-sector, #chart-region, #chart-corr, #chart-weights,
+    #chart-frontier, #chart-sparplan, #chart-sparrate { min-height: 320px; }
+    .rebalance-buy { color: #4caf50; font-weight: 600; }
+    .rebalance-sell { color: #ef5350; font-weight: 600; }
+    .rebalance-ok { color: #aaa; }
+    .param-row label { font-size: 0.82rem; color: #aaa; }
+    input[type=range] { accent-color: #6c8ebf; }
     .modal-content { background: #1a1d27; border: 1px solid #2a2d3a; }
     .modal-header, .modal-footer { border-color: #2a2d3a; }
     .group-bounds-row input[type=number] { width: 80px; }
@@ -99,6 +105,8 @@
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-performance">Performance</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-optimizer">Optimizer</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-allocation">Allokation</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-frontier">Effizienzgrenze</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-sparplan">Sparplan</button></li>
   </ul>
 
   <div class="tab-content">
@@ -138,6 +146,17 @@
 
     <!-- Tab 2: Performance -->
     <div class="tab-pane fade" id="tab-performance">
+      <div class="d-flex align-items-center gap-2 mb-3">
+        <label class="small text-muted mb-0">Benchmark:</label>
+        <select id="benchmark-select" class="form-select form-select-sm" style="width:auto">
+          <option value="">Keiner</option>
+          <option value="IWDA.AS" selected>MSCI World (IWDA)</option>
+          <option value="^GDAXI">DAX</option>
+          <option value="^GSPC">S&amp;P 500</option>
+        </select>
+        <button id="btn-benchmark" class="btn btn-sm btn-outline-secondary">Laden</button>
+        <span id="benchmark-status" class="small text-muted"></span>
+      </div>
       <div class="row g-3 mb-3" id="perf-metrics">
         <div class="col-6 col-md-3"><div class="card metric-card py-3"><div class="label">CAGR</div><div class="value" id="m-cagr">—</div></div></div>
         <div class="col-6 col-md-3"><div class="card metric-card py-3"><div class="label">Volatilität</div><div class="value" id="m-vol">—</div></div></div>
@@ -199,6 +218,22 @@
             <div class="col-4"><div class="card metric-card py-3"><div class="label">Volatilität</div><div class="value" id="om-vol">—</div></div></div>
             <div class="col-4"><div class="card metric-card py-3"><div class="label">Sharpe</div><div class="value" id="om-sharpe">—</div></div></div>
           </div>
+          <div id="rebalancing-card" class="card mt-3" style="display:none">
+            <div class="card-body p-0">
+              <div class="px-3 pt-3 pb-1 small text-muted">Rebalancing — Differenz zum Zielportfolio</div>
+              <div style="overflow-x:auto">
+                <table class="table table-dark table-sm mb-0">
+                  <thead><tr>
+                    <th>ISIN</th><th>Name</th>
+                    <th class="text-end">Aktuell €</th><th class="text-end">Aktuell %</th>
+                    <th class="text-end">Ziel %</th><th class="text-end">Differenz €</th>
+                    <th>Aktion</th>
+                  </tr></thead>
+                  <tbody id="rebalancing-body"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -210,6 +245,75 @@
         <div class="col-md-6"><div class="card"><div class="card-body"><div id="chart-region"></div></div></div></div>
       </div>
       <div class="card mt-3"><div class="card-body"><div id="chart-corr"></div></div></div>
+    </div>
+
+    <!-- Tab 5: Frontier -->
+    <div class="tab-pane fade" id="tab-frontier">
+      <div class="d-flex align-items-center gap-2 mb-3">
+        <button id="btn-frontier" class="btn btn-primary btn-sm">Berechnen</button>
+        <span id="frontier-status" class="small text-muted"></span>
+        <div id="frontier-spinner" class="spinner-border spinner-border-sm text-primary d-none ms-2"></div>
+      </div>
+      <div class="card"><div class="card-body"><div id="chart-frontier"></div></div></div>
+      <p class="small text-muted mt-2">Farbe = Sharpe Ratio. Weißer Kreis = aktuelles Portfolio. Roter Stern = optimiertes Portfolio (falls berechnet).</p>
+    </div>
+
+    <!-- Tab 6: Sparplan -->
+    <div class="tab-pane fade" id="tab-sparplan">
+      <div class="row g-3">
+        <div class="col-lg-4">
+          <div class="card mb-3">
+            <div class="card-body">
+              <h6 class="card-title">Parameter</h6>
+              <div class="param-row mb-2">
+                <label>Monatliche Sparrate (€)</label>
+                <input type="number" id="sp-amount" class="form-control form-control-sm" value="500" min="1" step="50"/>
+              </div>
+              <div class="param-row mb-2">
+                <label>Laufzeit: <strong id="sp-years-label">20 Jahre</strong></label>
+                <input type="range" id="sp-years" class="form-range" min="1" max="40" value="20"/>
+              </div>
+              <div class="param-row mb-2">
+                <label>Jährl. Rendite (%)</label>
+                <input type="number" id="sp-return" class="form-control form-control-sm" value="7" min="-20" max="50" step="0.1"/>
+              </div>
+              <div class="param-row mb-2">
+                <label>Jährl. Volatilität (%) <span class="text-muted small">(für Szenario-Band)</span></label>
+                <input type="number" id="sp-vol" class="form-control form-control-sm" value="15" min="0" max="80" step="0.5"/>
+              </div>
+              <div class="param-row mb-2">
+                <label>Jährl. Sparratenerhöhung (%)</label>
+                <input type="number" id="sp-increase" class="form-control form-control-sm" value="0" min="0" max="20" step="0.5"/>
+              </div>
+              <div class="param-row mb-2">
+                <label>Inflationsrate (%)</label>
+                <input type="number" id="sp-inflation" class="form-control form-control-sm" value="2" min="0" max="20" step="0.1"/>
+              </div>
+              <div class="param-row mb-2">
+                <label>Steuersatz (%) <span class="text-muted small">Abgeltungssteuer + Soli</span></label>
+                <input type="number" id="sp-tax" class="form-control form-control-sm" value="26.375" min="0" max="50" step="0.001"/>
+              </div>
+              <button id="btn-sp-portfolio" class="btn btn-outline-secondary btn-sm w-100 mt-1" title="Rendite und Volatilität aus Portfoliodaten laden">Portfolio-Werte laden</button>
+            </div>
+          </div>
+          <button id="btn-simulate" class="btn btn-primary w-100">Simulieren</button>
+          <div id="sp-error" class="text-danger small mt-2"></div>
+        </div>
+        <div class="col-lg-8">
+          <div class="row g-2 mb-3" id="sp-result-cards" style="display:none">
+            <div class="col-4"><div class="card metric-card py-3"><div class="label">Endwert (Basis)</div><div class="value" id="sp-endval">—</div></div></div>
+            <div class="col-4"><div class="card metric-card py-3"><div class="label">Eingezahlt</div><div class="value" id="sp-invested">—</div></div></div>
+            <div class="col-4"><div class="card metric-card py-3"><div class="label">Netto nach Steuern</div><div class="value" id="sp-net">—</div></div></div>
+          </div>
+          <div class="row g-2 mb-3" id="sp-result-cards2" style="display:none">
+            <div class="col-4"><div class="card metric-card py-3"><div class="label">Realwert (inflationsber.)</div><div class="value" id="sp-real">—</div></div></div>
+            <div class="col-4"><div class="card metric-card py-3"><div class="label">Gewinn brutto</div><div class="value" id="sp-gain">—</div></div></div>
+            <div class="col-4"><div class="card metric-card py-3"><div class="label">Rendite gesamt</div><div class="value" id="sp-totalret">—</div></div></div>
+          </div>
+          <div class="card mb-3"><div class="card-body"><div id="chart-sparplan"></div></div></div>
+          <div class="card" id="sp-rate-card" style="display:none"><div class="card-body"><div id="chart-sparrate"></div></div></div>
+        </div>
+      </div>
     </div>
 
   </div><!-- tab-content -->
@@ -224,6 +328,8 @@ let lastOptWeights = null;
 let categoryOverrides = {};
 let perfLoaded = false;
 let allocLoaded = false;
+let frontierLoaded = false;
+let benchmarkTraceIdx = null;
 
 const plotLayout = (title, extra={}) => Object.assign({
   title: {text: title, font: {color:"#e0e0e0"}},
@@ -364,6 +470,7 @@ async function renderPerformance() {
     type: "scatter", mode: "lines", name: "Portfolio",
     line: {color: "#6c8ebf"}
   };
+  benchmarkTraceIdx = null;
   Plotly.newPlot("chart-perf", [trace], plotLayout("Kumulative Rendite (%)", {
     yaxis: {gridcolor:"#2a2d3a", ticksuffix:"%"}
   }), {responsive:true});
@@ -400,6 +507,219 @@ async function addCompareOverlay() {
     line: {color: "#ab47bc", dash: "dot"}
   };
   Plotly.addTraces("chart-sharpe", sharpeTrace2);
+}
+
+// ---- Benchmark ----
+async function loadBenchmark() {
+  const ticker = document.getElementById("benchmark-select").value;
+  const statusEl = document.getElementById("benchmark-status");
+  if (!ticker) {
+    if (benchmarkTraceIdx !== null) {
+      Plotly.deleteTraces("chart-perf", benchmarkTraceIdx);
+      benchmarkTraceIdx = null;
+    }
+    statusEl.textContent = "";
+    return;
+  }
+  statusEl.textContent = "Lade…";
+  try {
+    const res = await fetch(`/api/benchmark?ticker=${encodeURIComponent(ticker)}`);
+    const data = await res.json();
+    if (data.error) { statusEl.textContent = "Fehler: " + data.error; return; }
+    const trace = {
+      x: data.dates, y: data.cumulative_return.map(v => v*100),
+      type: "scatter", mode: "lines", name: data.name,
+      line: {color: "#aaaaaa", dash: "dot"}
+    };
+    if (benchmarkTraceIdx !== null) {
+      Plotly.deleteTraces("chart-perf", benchmarkTraceIdx);
+    }
+    Plotly.addTraces("chart-perf", trace);
+    const chartData = document.getElementById("chart-perf").data;
+    benchmarkTraceIdx = chartData.length - 1;
+    statusEl.textContent = data.name + " geladen";
+  } catch(e) {
+    statusEl.textContent = "Fehler: " + e.message;
+  }
+}
+
+// ---- Rebalancing ----
+function renderRebalancing(optWeights) {
+  if (!portfolioData) return;
+  const total = portfolioData.total;
+  const tbody = document.getElementById("rebalancing-body");
+  tbody.innerHTML = "";
+  for (const h of portfolioData.holdings) {
+    const targetFrac = optWeights[h.isin] ?? 0;
+    const targetEur = targetFrac * total;
+    const delta = targetEur - h.net_value;
+    const absD = Math.abs(delta);
+    let cls, label;
+    if (absD < 5) { cls = "rebalance-ok"; label = "OK"; }
+    else if (delta > 0) { cls = "rebalance-buy"; label = `Kaufen`; }
+    else { cls = "rebalance-sell"; label = `Verkaufen`; }
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td class="small">${h.isin}</td>
+      <td class="small">${h.name}</td>
+      <td class="text-end">${fmtCurrency(h.net_value)}</td>
+      <td class="text-end">${(h.weight*100).toFixed(1)}%</td>
+      <td class="text-end">${(targetFrac*100).toFixed(1)}%</td>
+      <td class="text-end ${cls}">${delta >= 0 ? "+" : ""}${fmtCurrency(delta)}</td>
+      <td class="${cls}">${label}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+  document.getElementById("rebalancing-card").style.display = "";
+}
+
+// ---- Frontier ----
+async function loadFrontier() {
+  if (!portfolioData) return;
+  const btn = document.getElementById("btn-frontier");
+  const statusEl = document.getElementById("frontier-status");
+  const spinner = document.getElementById("frontier-spinner");
+  btn.disabled = true;
+  spinner.classList.remove("d-none");
+  statusEl.textContent = "Berechne 500 Portfolios…";
+
+  const total = portfolioData.total;
+  const currentWeights = {};
+  for (const h of portfolioData.holdings) currentWeights[h.isin] = h.weight;
+
+  try {
+    const body = {current_weights: currentWeights};
+    if (lastOptWeights) body.opt_weights = lastOptWeights;
+    const res = await fetch("/api/frontier", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (data.error) { statusEl.textContent = "Fehler: " + data.error; return; }
+
+    const traces = [];
+    traces.push({
+      x: data.vols.map(v => v*100), y: data.returns.map(r => r*100),
+      mode: "markers", type: "scatter", name: "Zufällige Portfolios",
+      marker: {
+        color: data.sharpes, colorscale: "Viridis", size: 5, opacity: 0.7,
+        colorbar: {title: "Sharpe", tickfont: {color:"#e0e0e0"}, titlefont: {color:"#e0e0e0"}}
+      }
+    });
+    if (data.frontier_vols && data.frontier_vols.length > 0) {
+      traces.push({
+        x: data.frontier_vols.map(v => v*100), y: data.frontier_returns.map(r => r*100),
+        mode: "lines", type: "scatter", name: "Effizienzgrenze",
+        line: {color: "#ffffff", width: 2}
+      });
+    }
+    if (data.current) {
+      traces.push({
+        x: [data.current.vol*100], y: [data.current.ret*100],
+        mode: "markers", type: "scatter", name: "Aktuell",
+        marker: {color: "#ffffff", size: 14, symbol: "circle", line: {color:"#6c8ebf", width:2}}
+      });
+    }
+    if (data.optimized) {
+      traces.push({
+        x: [data.optimized.vol*100], y: [data.optimized.ret*100],
+        mode: "markers", type: "scatter", name: "Optimiert",
+        marker: {color: "#ef5350", size: 16, symbol: "star", line: {color:"#fff", width:1}}
+      });
+    }
+    Plotly.newPlot("chart-frontier", traces, plotLayout("Effizienzgrenze (Monte Carlo)", {
+      xaxis: {title:"Volatilität (%)", gridcolor:"#2a2d3a", ticksuffix:"%"},
+      yaxis: {title:"Erwartete Rendite (%)", gridcolor:"#2a2d3a", ticksuffix:"%"},
+      margin:{t:50, r:80, b:60, l:70}
+    }), {responsive:true});
+    frontierLoaded = true;
+    statusEl.textContent = `${data.returns.length} Portfolios simuliert`;
+  } catch(e) {
+    statusEl.textContent = "Fehler: " + e.message;
+  } finally {
+    btn.disabled = false;
+    spinner.classList.add("d-none");
+  }
+}
+
+// ---- Sparplan ----
+async function runSimulation() {
+  const btn = document.getElementById("btn-simulate");
+  const errDiv = document.getElementById("sp-error");
+  errDiv.textContent = "";
+  btn.disabled = true;
+
+  const monthly_amount = parseFloat(document.getElementById("sp-amount").value);
+  const years = parseInt(document.getElementById("sp-years").value);
+  const annual_return = parseFloat(document.getElementById("sp-return").value) / 100;
+  const annual_volatility = parseFloat(document.getElementById("sp-vol").value) / 100;
+  const annual_savings_increase = parseFloat(document.getElementById("sp-increase").value) / 100;
+  const inflation_rate = parseFloat(document.getElementById("sp-inflation").value) / 100;
+  const tax_rate = parseFloat(document.getElementById("sp-tax").value) / 100;
+
+  try {
+    const res = await fetch("/api/simulation", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({monthly_amount, years, annual_return, annual_volatility,
+                            annual_savings_increase, inflation_rate, tax_rate})
+    });
+    const data = await res.json();
+    if (data.error) { errDiv.textContent = data.error; return; }
+
+    const endBase = data.base_gross[data.base_gross.length-1];
+    const endInv = data.invested[data.invested.length-1];
+    const endNet = data.base_net[data.base_net.length-1];
+    const endReal = data.real_value[data.real_value.length-1];
+
+    document.getElementById("sp-endval").textContent = fmtCurrency(endBase);
+    document.getElementById("sp-invested").textContent = fmtCurrency(endInv);
+    document.getElementById("sp-net").textContent = fmtCurrency(endNet);
+    document.getElementById("sp-real").textContent = fmtCurrency(endReal);
+    document.getElementById("sp-gain").textContent = fmtCurrency(endBase - endInv);
+    document.getElementById("sp-totalret").textContent = endInv > 0 ? ((endBase/endInv - 1)*100).toFixed(1)+"%" : "—";
+    document.getElementById("sp-result-cards").style.display = "";
+    document.getElementById("sp-result-cards2").style.display = "";
+
+    // Main chart: invested fill + bull/bear band + base + net
+    const yrs = data.years_list;
+    Plotly.newPlot("chart-sparplan", [
+      {x:yrs, y:data.invested, name:"Eingezahlt", type:"scatter", mode:"lines",
+       fill:"tozeroy", fillcolor:"rgba(108,142,191,0.15)", line:{color:"#6c8ebf", dash:"dot"}},
+      {x:yrs, y:data.bear_gross, name:"Bear", type:"scatter", mode:"lines",
+       line:{color:"transparent"}, showlegend:false},
+      {x:yrs, y:data.bull_gross, name:"Bull/Bear-Band", type:"scatter", mode:"lines",
+       fill:"tonexty", fillcolor:"rgba(255,167,38,0.12)", line:{color:"transparent"}},
+      {x:yrs, y:data.base_gross, name:"Basis (brutto)", type:"scatter", mode:"lines",
+       line:{color:"#ffa726", width:2}},
+      {x:yrs, y:data.base_net, name:"Netto (nach Steuern)", type:"scatter", mode:"lines",
+       line:{color:"#4caf50", width:2}},
+      {x:yrs, y:data.real_value, name:"Realwert (inflationsber.)", type:"scatter", mode:"lines",
+       line:{color:"#ef5350", width:1.5, dash:"dash"}},
+    ], plotLayout("Sparplan-Simulation", {
+      xaxis:{title:"Jahre", gridcolor:"#2a2d3a"},
+      yaxis:{title:"Wert (€)", gridcolor:"#2a2d3a"},
+      legend:{font:{color:"#e0e0e0"}}
+    }), {responsive:true});
+
+    // Monthly amounts chart (only if increase > 0)
+    if (annual_savings_increase > 0) {
+      document.getElementById("sp-rate-card").style.display = "";
+      Plotly.newPlot("chart-sparrate", [{
+        x: yrs, y: data.monthly_amounts, type:"bar",
+        marker:{color:"#6c8ebf"}, name:"Monatliche Sparrate (€)"
+      }], plotLayout("Monatliche Sparrate", {
+        xaxis:{title:"Jahr"}, yaxis:{title:"€", tickprefix:"€"}
+      }), {responsive:true});
+    } else {
+      document.getElementById("sp-rate-card").style.display = "none";
+    }
+  } catch(e) {
+    errDiv.textContent = "Fehler: " + e.message;
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // ---- Optimizer ----
@@ -445,6 +765,7 @@ async function runOptimize() {
     document.getElementById("om-sharpe").textContent = data.sharpe.toFixed(2);
     document.getElementById("om-sharpe").style.color = sharpeColor(data.sharpe);
     document.getElementById("opt-metrics").style.display = "";
+    renderRebalancing(data.weights);
 
     if (perfLoaded) document.getElementById("btn-compare").classList.remove("d-none");
   } catch(e) {
@@ -538,8 +859,8 @@ document.getElementById("tr-btn").addEventListener("click", async () => {
       btn.textContent = "Weiter";
       document.getElementById("tr-step1").style.display = "block";
       document.getElementById("tr-step2").style.display = "none";
-      perfLoaded = false; allocLoaded = false;
-      categoryOverrides = {};
+      perfLoaded = false; allocLoaded = false; frontierLoaded = false;
+      categoryOverrides = {}; lastOptWeights = null; benchmarkTraceIdx = null;
       await loadPortfolio();
     }
   } finally {
@@ -564,7 +885,8 @@ document.getElementById("csvUpload").addEventListener("change", async (e) => {
   const res = await fetch("/api/upload", {method:"POST", body: form});
   const data = await res.json();
   if (data.error) { showError(data.error); return; }
-  perfLoaded = false; allocLoaded = false; categoryOverrides = {};
+  perfLoaded = false; allocLoaded = false; frontierLoaded = false;
+  categoryOverrides = {}; lastOptWeights = null; benchmarkTraceIdx = null;
   await loadPortfolio();
 });
 
@@ -578,8 +900,24 @@ document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn => {
 });
 
 document.getElementById("btn-compare").addEventListener("click", addCompareOverlay);
-
+document.getElementById("btn-benchmark").addEventListener("click", loadBenchmark);
 document.getElementById("btn-optimize").addEventListener("click", runOptimize);
+document.getElementById("btn-frontier").addEventListener("click", loadFrontier);
+document.getElementById("btn-simulate").addEventListener("click", runSimulation);
+
+document.getElementById("sp-years").addEventListener("input", e => {
+  document.getElementById("sp-years-label").textContent = e.target.value + " Jahre";
+});
+
+document.getElementById("btn-sp-portfolio").addEventListener("click", async () => {
+  if (!portfolioData) return;
+  const res = await fetch("/api/performance");
+  const data = await res.json();
+  if (!data.error) {
+    document.getElementById("sp-return").value = (data.cagr * 100).toFixed(1);
+    document.getElementById("sp-vol").value = (data.volatility * 100).toFixed(1);
+  }
+});
 
 // Objective radio: show/hide target input
 document.querySelectorAll('input[name="objective"]').forEach(r => {

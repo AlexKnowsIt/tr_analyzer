@@ -5,8 +5,10 @@ import pytest
 from optimizer import (
     build_sector_constraints,
     classify_asset,
+    compute_frontier,
     compute_performance,
     parse_constraints,
+    simulate_savings_plan,
 )
 
 
@@ -75,3 +77,48 @@ def test_compute_performance_max_drawdown_nonpositive():
     weights = {"T0": 0.5, "T1": 0.3, "T2": 0.2}
     result = compute_performance(price_data, weights)
     assert result["max_drawdown"] <= 0
+
+
+def test_compute_frontier_shape():
+    price_data = _make_price_data(n_days=600, n_assets=4)
+    result = compute_frontier(price_data, n=50)
+    assert set(result.keys()) == {"returns", "vols", "sharpes", "frontier_returns", "frontier_vols"}
+    assert len(result["returns"]) == 50
+    assert len(result["vols"]) == 50
+    assert len(result["sharpes"]) == 50
+    assert len(result["frontier_returns"]) == len(result["frontier_vols"])
+
+
+def test_compute_frontier_sharpe_range():
+    price_data = _make_price_data(n_days=600, n_assets=4)
+    result = compute_frontier(price_data, n=100)
+    assert all(s >= -10 for s in result["sharpes"])
+
+
+def test_simulate_savings_plan_base():
+    result = simulate_savings_plan(
+        monthly_amount=500, years=10, annual_return=0.07,
+        annual_volatility=0.15, annual_savings_increase=0.0,
+        inflation_rate=0.02, tax_rate=0.26375,
+    )
+    assert result["invested"][-1] == pytest.approx(500 * 12 * 10, rel=0.01)
+    assert result["base_gross"][-1] > result["invested"][-1]
+    assert len(result["years_list"]) == 10
+    assert result["invested"] == sorted(result["invested"])
+
+
+def test_simulate_savings_plan_bear_lt_base():
+    result = simulate_savings_plan(
+        monthly_amount=300, years=5, annual_return=0.07,
+        annual_volatility=0.12,
+    )
+    for base, bear in zip(result["base_gross"], result["bear_gross"]):
+        assert bear <= base
+
+
+def test_simulate_savings_plan_increase():
+    result = simulate_savings_plan(
+        monthly_amount=200, years=5, annual_return=0.07,
+        annual_volatility=0.10, annual_savings_increase=0.05,
+    )
+    assert result["monthly_amounts"][-1] > result["monthly_amounts"][0]
