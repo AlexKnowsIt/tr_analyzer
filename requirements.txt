@@ -5,3 +5,4 @@ plotly
 flask
 pandas
 numpy
+matplotlib

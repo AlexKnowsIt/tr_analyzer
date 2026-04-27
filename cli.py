@@ -22,12 +22,13 @@ def download_portfolio(phone: str, pin: str, output: str = "portfolio.csv") -> P
         Path to the CSV file that will be written.
     """
     tr = TradeRepublicApi(phone_no=phone, pin=pin)
-    tr.login()
-    pf = Portfolio(tr)
+    countdown = tr.initiate_weblogin()
+    code = input(f"2FA-Code (läuft in {countdown}s ab): ").strip()
+    tr.complete_weblogin(code)
+    pf = Portfolio(tr, output=output)
     asyncio.run(pf.portfolio_loop())
-    output_path = Path(output)
-    pf.portfolio_to_csv(output_path)
-    return output_path
+    pf.portfolio_to_csv()
+    return Path(output)
 
 
 def main() -> None:
