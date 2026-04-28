@@ -15,10 +15,17 @@ from optimizer import (
     VALID_CATEGORIES,
     build_sector_constraints,
     classify_asset,
+    compute_beta_alpha,
     compute_frontier,
     compute_performance,
+    compute_return_attribution,
+    compute_risk_contributions,
+    compute_risk_parity,
+    compute_var_cvar,
     parse_constraints,
     run_optimization,
+    run_stress_test,
+    simulate_mc_paths,
     simulate_savings_plan,
 )
 from pytr.api import TradeRepublicApi
@@ -452,6 +459,264 @@ def api_simulation():
     result["annual_return_used"] = annual_return
     result["annual_volatility_used"] = annual_volatility
     return jsonify(result)
+
+
+@app.route("/api/risk")
+def api_risk():
+    df = _load_portfolio()
+    if df is None:
+        return jsonify({"error": "no_portfolio"}), 404
+
+    weights_param = request.args.get("weights")
+    tickers = df["ISIN"].tolist()
+    try:
+        prices = _fetch_prices(tickers)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 422
+    prices = prices.reindex(columns=tickers).dropna()
+    if prices.empty:
+        return jsonify({"error": "no_price_data"}), 422
+
+    if weights_param:
+        try:
+            weights = json.loads(weights_param)
+        except json.JSONDecodeError:
+            return jsonify({"error": "invalid weights JSON"}), 422
+    else:
+        total = float(df["netValue"].sum())
+        weights = {row["ISIN"]: float(row["netValue"]) / total for _, row in df.iterrows()}
+
+    try:
+        risk_contrib = compute_risk_contributions(prices, weights)
+        var_data = compute_var_cvar(prices, weights)
+        # beta vs MSCI World
+        bench_prices = _fetch_prices(["IWDA.AS"])
+        bench_col = bench_prices.columns[0]
+        bench_ret = bench_prices[bench_col].pct_change().dropna()
+        port_returns = prices.pct_change().dropna().dot(
+            pd.Series(weights).reindex(prices.columns).fillna(0)
+        )
+        port_returns_norm = port_returns / port_returns.abs().sum() * port_returns.abs().sum()
+        beta_data = compute_beta_alpha(port_returns, bench_ret)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 422
+
+    return jsonify({**risk_contrib, **var_data, **beta_data})
+
+
+@app.route("/api/attribution")
+def api_attribution():
+    df = _load_portfolio()
+    if df is None:
+        return jsonify({"error": "no_portfolio"}), 404
+    tickers = df["ISIN"].tolist()
+    try:
+        prices = _fetch_prices(tickers)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 422
+    prices = prices.reindex(columns=tickers).dropna()
+    if prices.empty:
+        return jsonify({"error": "no_price_data"}), 422
+    total = float(df["netValue"].sum())
+    weights = {row["ISIN"]: float(row["netValue"]) / total for _, row in df.iterrows()}
+    try:
+        result = compute_return_attribution(prices, weights)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 422
+    # enrich with names
+    name_map = {row["ISIN"]: row.get("Name", row["ISIN"]) for _, row in df.iterrows()}
+    result["names"] = [name_map.get(t, t) for t in result["tickers"]]
+    return jsonify(result)
+
+
+@app.route("/api/stress")
+def api_stress():
+    df = _load_portfolio()
+    if df is None:
+        return jsonify({"error": "no_portfolio"}), 404
+    tickers = df["ISIN"].tolist()
+    try:
+        prices = _fetch_prices(tickers)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 422
+    prices = prices.reindex(columns=tickers).dropna()
+    if prices.empty:
+        return jsonify({"error": "no_price_data"}), 422
+    total = float(df["netValue"].sum())
+    weights = {row["ISIN"]: float(row["netValue"]) / total for _, row in df.iterrows()}
+    try:
+        result = run_stress_test(prices, weights)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 422
+    return jsonify(result)
+
+
+@app.route("/api/monte-carlo", methods=["POST"])
+def api_monte_carlo():
+    df = _load_portfolio()
+    if df is None:
+        return jsonify({"error": "no_portfolio"}), 404
+    body = request.get_json(force=True) or {}
+    years = int(body.get("years", 10))
+    n_paths = int(body.get("n_paths", 200))
+    start_value = float(body.get("start_value", 10000))
+    weights_body = body.get("weights")
+    tickers = df["ISIN"].tolist()
+    try:
+        prices = _fetch_prices(tickers)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 422
+    prices = prices.reindex(columns=tickers).dropna()
+    if prices.empty:
+        return jsonify({"error": "no_price_data"}), 422
+    if weights_body:
+        weights = weights_body
+    else:
+        total = float(df["netValue"].sum())
+        weights = {row["ISIN"]: float(row["netValue"]) / total for _, row in df.iterrows()}
+    try:
+        result = simulate_mc_paths(prices, weights, years=years, n_paths=n_paths, start_value=start_value)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 422
+    return jsonify(result)
+
+
+@app.route("/api/income")
+def api_income():
+    df = _load_portfolio()
+    if df is None:
+        return jsonify({"error": "no_portfolio"}), 404
+    rows = []
+    total_dividend = 0.0
+    total_ter_cost = 0.0
+    for _, row in df.iterrows():
+        isin = row["ISIN"]
+        net = float(row["netValue"])
+        try:
+            info = yf.Ticker(isin).info
+        except Exception:
+            info = {}
+        div_yield = float(info.get("dividendYield") or 0)
+        ter = float(info.get("annualReportExpenseRatio") or 0)
+        annual_div = net * div_yield
+        annual_ter = net * ter
+        total_dividend += annual_div
+        total_ter_cost += annual_ter
+        rows.append({
+            "isin": isin,
+            "name": row.get("Name", isin),
+            "net_value": net,
+            "dividend_yield": div_yield,
+            "annual_dividend": round(annual_div, 2),
+            "ter": ter,
+            "annual_ter_cost": round(annual_ter, 2),
+        })
+    return jsonify({
+        "holdings": rows,
+        "total_annual_dividend": round(total_dividend, 2),
+        "total_annual_ter_cost": round(total_ter_cost, 2),
+        "portfolio_weighted_ter": round(total_ter_cost / float(df["netValue"].sum()), 6) if df["netValue"].sum() > 0 else 0,
+    })
+
+
+@app.route("/api/tax-estimate")
+def api_tax_estimate():
+    df = _load_portfolio()
+    if df is None:
+        return jsonify({"error": "no_portfolio"}), 404
+    required = {"avgCost", "quantity"}
+    if not required.issubset(df.columns):
+        return jsonify({"error": f"CSV missing columns for tax estimate: {required - set(df.columns)}"}), 422
+    tickers = df["ISIN"].tolist()
+    try:
+        prices = _fetch_prices(tickers)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 422
+    latest = prices.iloc[-1] if not prices.empty else pd.Series()
+    TAX_RATE = 0.26375
+    rows = []
+    total_gain = 0.0
+    total_tax = 0.0
+    for _, row in df.iterrows():
+        isin = row["ISIN"]
+        avg_cost = float(row["avgCost"])
+        qty = float(row["quantity"])
+        current_price = float(latest.get(isin, avg_cost))
+        gain = (current_price - avg_cost) * qty
+        tax = max(0.0, gain) * TAX_RATE
+        total_gain += gain
+        total_tax += tax
+        rows.append({
+            "isin": isin,
+            "name": row.get("Name", isin),
+            "avg_cost": avg_cost,
+            "current_price": current_price,
+            "quantity": qty,
+            "unrealized_gain": round(gain, 2),
+            "tax_estimate": round(tax, 2),
+        })
+    return jsonify({
+        "holdings": rows,
+        "total_unrealized_gain": round(total_gain, 2),
+        "total_tax_estimate": round(total_tax, 2),
+        "note": "Vereinfacht: kein Freistellungsauftrag, keine Teilverkäufe berücksichtigt",
+    })
+
+
+@app.route("/api/whatif", methods=["POST"])
+def api_whatif():
+    df = _load_portfolio()
+    if df is None:
+        return jsonify({"error": "no_portfolio"}), 404
+    body = request.get_json(force=True) or {}
+    modifications = body.get("modifications", [])  # [{isin, amount_eur}]
+
+    net_values = {row["ISIN"]: float(row["netValue"]) for _, row in df.iterrows()}
+    names = {row["ISIN"]: row.get("Name", row["ISIN"]) for _, row in df.iterrows()}
+
+    for mod in modifications:
+        isin = mod.get("isin", "")
+        delta = float(mod.get("amount_eur", 0))
+        net_values[isin] = max(0.0, net_values.get(isin, 0) + delta)
+
+    new_total = sum(net_values.values())
+    if new_total <= 0:
+        return jsonify({"error": "Portfolio value would be zero"}), 422
+    new_weights = {k: v / new_total for k, v in net_values.items() if v > 0}
+
+    all_tickers = list(new_weights.keys())
+    try:
+        prices = _fetch_prices(all_tickers)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 422
+    prices = prices.reindex(columns=all_tickers).dropna()
+    if prices.empty:
+        return jsonify({"error": "no_price_data"}), 422
+
+    orig_total = float(df["netValue"].sum())
+    orig_weights = {row["ISIN"]: float(row["netValue"]) / orig_total for _, row in df.iterrows()}
+    try:
+        orig_perf = compute_performance(prices, orig_weights)
+        new_perf = compute_performance(prices, new_weights)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 422
+
+    return jsonify({
+        "original": {
+            "weights": orig_weights,
+            "sharpe": orig_perf["sharpe"],
+            "volatility": orig_perf["volatility"],
+            "cagr": orig_perf["cagr"],
+        },
+        "modified": {
+            "weights": new_weights,
+            "sharpe": new_perf["sharpe"],
+            "volatility": new_perf["volatility"],
+            "cagr": new_perf["cagr"],
+        },
+        "delta_sharpe": new_perf["sharpe"] - orig_perf["sharpe"],
+        "names": names,
+    })
 
 
 if __name__ == "__main__":

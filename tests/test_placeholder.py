@@ -5,10 +5,17 @@ import pytest
 from optimizer import (
     build_sector_constraints,
     classify_asset,
+    compute_beta_alpha,
     compute_frontier,
     compute_performance,
+    compute_return_attribution,
+    compute_risk_contributions,
+    compute_risk_parity,
+    compute_var_cvar,
     parse_constraints,
     run_optimization,
+    run_stress_test,
+    simulate_mc_paths,
     simulate_savings_plan,
 )
 
@@ -253,3 +260,145 @@ def test_run_optimization_invalid_objective():
     price_data = _make_price_data_opt()
     with pytest.raises(ValueError):
         run_optimization(price_data, "nonexistent_objective", None, [], {}, {}, {})
+
+
+# ---- compute_risk_contributions ----
+
+def test_compute_risk_contributions_sums_to_one():
+    price_data = _make_price_data_opt()
+    weights = {"T0": 0.3, "T1": 0.2, "T2": 0.2, "T3": 0.2, "T4": 0.1}
+    result = compute_risk_contributions(price_data, weights)
+    assert sum(result["percentage"]) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_compute_risk_contributions_nonnegative():
+    price_data = _make_price_data_opt()
+    weights = {"T0": 0.3, "T1": 0.2, "T2": 0.2, "T3": 0.2, "T4": 0.1}
+    result = compute_risk_contributions(price_data, weights)
+    assert all(c >= 0 for c in result["component"])
+
+
+# ---- compute_var_cvar ----
+
+def test_compute_var_cvar_ordering():
+    price_data = _make_price_data_opt()
+    weights = {"T0": 0.3, "T1": 0.2, "T2": 0.2, "T3": 0.2, "T4": 0.1}
+    result = compute_var_cvar(price_data, weights)
+    # CVaR is worse (more negative) than VaR
+    assert result["cvar_95"] <= result["var_95"]
+    assert result["cvar_99"] <= result["var_99"]
+
+
+def test_compute_var_cvar_negative():
+    price_data = _make_price_data_opt()
+    weights = {"T0": 0.3, "T1": 0.2, "T2": 0.2, "T3": 0.2, "T4": 0.1}
+    result = compute_var_cvar(price_data, weights)
+    assert result["var_95"] < 0
+
+
+# ---- compute_beta_alpha ----
+
+def _make_returns_series(n=500, seed=1):
+    rng = np.random.default_rng(seed)
+    r = rng.normal(0.0005, 0.01, n)
+    dates = pd.date_range("2020-01-01", periods=n, freq="B")
+    return pd.Series(r, index=dates)
+
+
+def test_compute_beta_alpha_shape():
+    port = _make_returns_series(seed=1)
+    bench = _make_returns_series(seed=2)
+    result = compute_beta_alpha(port, bench)
+    assert {"beta", "alpha", "r_squared"} == set(result.keys())
+    assert 0.0 <= result["r_squared"] <= 1.0
+
+
+def test_compute_beta_alpha_market():
+    bench = _make_returns_series(seed=42)
+    result = compute_beta_alpha(bench, bench)
+    # cov uses ddof=1, var uses ddof=0 → slight deviation; should be very close to 1
+    assert result["beta"] == pytest.approx(1.0, rel=1e-2)
+
+
+# ---- compute_return_attribution ----
+
+def test_compute_return_attribution_sums():
+    price_data = _make_price_data_opt()
+    weights = {"T0": 0.3, "T1": 0.2, "T2": 0.2, "T3": 0.2, "T4": 0.1}
+    result = compute_return_attribution(price_data, weights)
+    assert sum(result["contributions"]) == pytest.approx(result["total"], abs=1e-8)
+    assert len(result["tickers"]) == len(result["contributions"])
+
+
+# ---- run_stress_test ----
+
+def test_run_stress_test_keys():
+    price_data = _make_price_data_opt()
+    weights = {"T0": 0.3, "T1": 0.2, "T2": 0.2, "T3": 0.2, "T4": 0.1}
+    result = run_stress_test(price_data, weights)
+    for scenario_result in result.values():
+        assert "available" in scenario_result
+        assert "start" in scenario_result
+        assert "end" in scenario_result
+        if scenario_result["available"]:
+            assert "total_return" in scenario_result
+            assert "max_drawdown" in scenario_result
+            assert scenario_result["max_drawdown"] <= 0
+
+
+def test_run_stress_test_2022_available():
+    # 2022 scenario is within 5y window (data from 2019)
+    price_data = _make_price_data_opt(n_days=1800)
+    weights = {"T0": 0.3, "T1": 0.2, "T2": 0.2, "T3": 0.2, "T4": 0.1}
+    result = run_stress_test(price_data, weights)
+    # 2022 Zinsanstieg should be available since data starts 2019
+    assert result["2022 Zinsanstieg"]["available"] is True
+
+
+# ---- simulate_mc_paths ----
+
+def test_simulate_mc_paths_shape():
+    price_data = _make_price_data_opt()
+    weights = {"T0": 0.3, "T1": 0.2, "T2": 0.2, "T3": 0.2, "T4": 0.1}
+    result = simulate_mc_paths(price_data, weights, years=5, n_paths=50, start_value=10000)
+    assert set(result["percentiles"].keys()) == {"5", "25", "50", "75", "95"}
+    expected_steps = 5 * 252
+    assert len(result["percentiles"]["50"]) == expected_steps
+
+
+def test_simulate_mc_paths_median_grows():
+    rng = np.random.default_rng(99)
+    n_days, n_assets = 800, 3
+    # strong positive drift
+    rets = rng.normal(0.002, 0.008, size=(n_days, n_assets))
+    prices = 100 * np.cumprod(1 + rets, axis=0)
+    price_data = pd.DataFrame(prices, index=pd.date_range("2019-01-01", periods=n_days, freq="B"),
+                              columns=["A", "B", "C"])
+    weights = {"A": 0.4, "B": 0.3, "C": 0.3}
+    result = simulate_mc_paths(price_data, weights, years=5, n_paths=200, start_value=10000)
+    median = result["percentiles"]["50"]
+    assert median[-1] > 10000
+
+
+# ---- compute_risk_parity ----
+
+def test_compute_risk_parity_weights_sum():
+    price_data = _make_price_data_opt()
+    result = compute_risk_parity(price_data)
+    assert sum(result["weights"].values()) == pytest.approx(1.0, abs=1e-4)
+    assert result["volatility"] > 0
+
+
+def test_compute_risk_parity_equal_rc():
+    price_data = _make_price_data_opt()
+    result = compute_risk_parity(price_data)
+    from optimizer import risk_models
+    import numpy as np
+    S = risk_models.sample_cov(price_data).values
+    w = np.array(list(result["weights"].values()))
+    var = w @ S @ w
+    rc = w * (S @ w) / var
+    # all risk contributions should be approximately equal (within 5% of 1/n)
+    n = len(w)
+    for rci in rc:
+        assert abs(rci - 1/n) < 0.05

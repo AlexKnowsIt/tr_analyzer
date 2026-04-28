@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 from pypfopt import EfficientFrontier, expected_returns, risk_models
 from pypfopt.exceptions import OptimizationError
+from scipy.optimize import minimize
 
 ASSET_TYPE_MAP = {
     "CRYPTOCURRENCY": "Krypto",
@@ -89,6 +90,9 @@ def run_optimization(
 
     if sector_mapper:
         ef.add_sector_constraints(sector_mapper, sector_lower, sector_upper)
+
+    if objective == "risk_parity":
+        return compute_risk_parity(price_data)
 
     try:
         if objective == "max_sharpe":
@@ -247,4 +251,186 @@ def simulate_savings_plan(
         "base_net": base_net,
         "real_value": real_value,
         "monthly_amounts": monthly_amounts,
+    }
+
+
+def compute_risk_contributions(price_data: pd.DataFrame, weights: Dict[str, float]) -> Dict:
+    S = risk_models.sample_cov(price_data)
+    w = pd.Series(weights).reindex(price_data.columns).fillna(0.0).values
+    w = w / w.sum()
+    S_arr = S.values
+    port_var = float(w @ S_arr @ w)
+    port_vol = float(np.sqrt(port_var))
+    marginal = (S_arr @ w) / port_vol
+    component = w * marginal
+    pct = component / port_vol
+    return {
+        "tickers": list(price_data.columns),
+        "marginal": marginal.tolist(),
+        "component": component.tolist(),
+        "percentage": pct.tolist(),
+        "portfolio_vol": port_vol,
+    }
+
+
+def compute_var_cvar(
+    price_data: pd.DataFrame,
+    weights: Dict[str, float],
+    confidence_levels: tuple = (0.95, 0.99),
+) -> Dict:
+    returns = price_data.pct_change().dropna()
+    w = pd.Series(weights).reindex(price_data.columns).fillna(0.0)
+    w = w / w.sum()
+    port_returns = returns.dot(w)
+    result: Dict = {
+        "dates": [d.strftime("%Y-%m-%d") for d in port_returns.index],
+        "daily_returns": [float(v) for v in port_returns],
+    }
+    for cl in confidence_levels:
+        key = str(int(cl * 100))
+        var = float(np.percentile(port_returns, (1 - cl) * 100))
+        tail = port_returns[port_returns <= var]
+        cvar = float(tail.mean()) if len(tail) > 0 else var
+        result[f"var_{key}"] = var
+        result[f"cvar_{key}"] = cvar
+    return result
+
+
+def compute_beta_alpha(
+    portfolio_returns: pd.Series,
+    benchmark_returns: pd.Series,
+) -> Dict:
+    common = portfolio_returns.index.intersection(benchmark_returns.index)
+    x = benchmark_returns.loc[common].values
+    y = portfolio_returns.loc[common].values
+    if len(x) < 2 or np.var(x) == 0:
+        return {"beta": 1.0, "alpha": 0.0, "r_squared": 0.0}
+    beta = float(np.cov(x, y)[0, 1] / np.var(x))
+    alpha_daily = float(np.mean(y) - beta * np.mean(x))
+    alpha_annual = float((1 + alpha_daily) ** 252 - 1)
+    r2 = float(np.corrcoef(x, y)[0, 1] ** 2)
+    return {"beta": beta, "alpha": alpha_annual, "r_squared": r2}
+
+
+def compute_return_attribution(price_data: pd.DataFrame, weights: Dict[str, float]) -> Dict:
+    w = pd.Series(weights).reindex(price_data.columns).fillna(0.0)
+    w = w / w.sum()
+    asset_returns = price_data.iloc[-1] / price_data.iloc[0] - 1
+    contributions = w * asset_returns
+    return {
+        "tickers": list(price_data.columns),
+        "asset_returns": [float(v) for v in asset_returns],
+        "contributions": [float(v) for v in contributions],
+        "total": float(contributions.sum()),
+    }
+
+
+_STRESS_SCENARIOS = {
+    "2022 Zinsanstieg": ("2022-01-03", "2022-10-13"),
+    "COVID-Crash 2020": ("2020-02-19", "2020-03-23"),
+    "Finanzkrise 2008": ("2008-09-01", "2009-03-31"),
+}
+
+
+def run_stress_test(price_data: pd.DataFrame, weights: Dict[str, float]) -> Dict:
+    w = pd.Series(weights).reindex(price_data.columns).fillna(0.0)
+    w = w / w.sum()
+    results = {}
+    for name, (start, end) in _STRESS_SCENARIOS.items():
+        slice_ = price_data.loc[start:end]
+        if len(slice_) < 2:
+            results[name] = {"available": False, "start": start, "end": end}
+            continue
+        asset_rets = slice_.pct_change().dropna()
+        port_rets = asset_rets.dot(w)
+        cum = (1 + port_rets).cumprod()
+        total_return = float(cum.iloc[-1] - 1)
+        rolling_max = cum.expanding().max()
+        max_dd = float(((cum - rolling_max) / rolling_max).min())
+        results[name] = {
+            "available": True,
+            "start": start,
+            "end": end,
+            "total_return": total_return,
+            "max_drawdown": max_dd,
+        }
+    return results
+
+
+def simulate_mc_paths(
+    price_data: pd.DataFrame,
+    weights: Dict[str, float],
+    years: int,
+    n_paths: int,
+    start_value: float,
+) -> Dict:
+    mu = expected_returns.mean_historical_return(price_data).values
+    S = risk_models.sample_cov(price_data).values
+    w = pd.Series(weights).reindex(price_data.columns).fillna(0.0).values
+    w = w / w.sum()
+    n_assets = len(mu)
+    n_steps = years * 252
+    dt = 1.0 / 252
+
+    try:
+        L = np.linalg.cholesky(S + np.eye(n_assets) * 1e-8)
+    except np.linalg.LinAlgError:
+        L = np.diag(np.sqrt(np.diag(S)))
+
+    rng = np.random.default_rng(0)
+    # Vectorized: shape (n_paths, n_steps, n_assets)
+    Z = rng.standard_normal((n_paths, n_steps, n_assets))
+    # Correlated noise: (L @ Z[p,t,:]) for each path/step
+    dW = (L @ Z.reshape(-1, n_assets).T).T.reshape(n_paths, n_steps, n_assets)
+    drift = (mu - 0.5 * np.diag(S)) * dt  # (n_assets,)
+    daily_asset = drift + dW * np.sqrt(dt)  # (n_paths, n_steps, n_assets)
+    port_daily = daily_asset @ w  # (n_paths, n_steps)
+    # Log-return path → price path
+    paths = start_value * np.exp(np.cumsum(np.log1p(port_daily), axis=1))  # (n_paths, n_steps)
+
+    pcts = {}
+    for p in [5, 25, 50, 75, 95]:
+        pcts[str(p)] = np.percentile(paths, p, axis=0).tolist()
+
+    day_labels = [f"Y{(i+1)/252:.2f}" for i in range(n_steps)]
+    return {
+        "percentiles": pcts,
+        "n_steps": n_steps,
+        "years": years,
+        "start_value": start_value,
+    }
+
+
+def compute_risk_parity(price_data: pd.DataFrame) -> Dict:
+    S = risk_models.sample_cov(price_data).values
+    mu = expected_returns.mean_historical_return(price_data)
+    mu_arr = mu.values
+    n = S.shape[0]
+    tickers = list(price_data.columns)
+
+    def erc_objective(w):
+        var = float(w @ S @ w)
+        if var <= 0:
+            return 1e10
+        rc = w * (S @ w) / var
+        target = 1.0 / n
+        return float(np.sum((rc - target) ** 2))
+
+    w0 = np.ones(n) / n
+    res = minimize(
+        erc_objective,
+        w0,
+        bounds=[(1e-6, 1.0)] * n,
+        constraints={"type": "eq", "fun": lambda w: w.sum() - 1},
+        method="SLSQP",
+        options={"ftol": 1e-12, "maxiter": 1000},
+    )
+    w = res.x / res.x.sum()
+    ret = float(w @ mu_arr)
+    vol = float(np.sqrt(w @ S @ w))
+    return {
+        "weights": {t: float(wi) for t, wi in zip(tickers, w)},
+        "expected_return": ret,
+        "volatility": vol,
+        "sharpe": ret / vol if vol > 0 else 0.0,
     }

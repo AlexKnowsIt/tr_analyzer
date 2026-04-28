@@ -27,12 +27,17 @@
     .metric-card .value { font-size: 1.6rem; font-weight: 700; }
     .metric-card .label { font-size: 0.78rem; color: #aaa; text-transform: uppercase; letter-spacing: 0.05em; }
     #chart-perf, #chart-sharpe, #chart-sector, #chart-region, #chart-corr, #chart-weights,
-    #chart-frontier, #chart-sparplan, #chart-sparrate { min-height: 320px; }
+    #chart-frontier, #chart-sparplan, #chart-sparrate,
+    #chart-risk-contrib, #chart-var, #chart-attribution, #chart-mc, #chart-whatif { min-height: 300px; }
     .rebalance-buy { color: #4caf50; font-weight: 600; }
     .rebalance-sell { color: #ef5350; font-weight: 600; }
     .rebalance-ok { color: #aaa; }
+    .rebalance-warn { color: #ff9800; font-weight: 600; }
     .param-row label { font-size: 0.82rem; color: #aaa; }
     input[type=range] { accent-color: #6c8ebf; }
+    .stress-ok { color: #4caf50; }
+    .stress-na { color: #555; font-style: italic; }
+    .section-title { font-size: 0.9rem; font-weight: 600; color: #aaa; text-transform: uppercase; letter-spacing: .05em; margin-bottom: .75rem; }
     .modal-content { background: #1a1d27; border: 1px solid #2a2d3a; }
     .modal-header, .modal-footer { border-color: #2a2d3a; }
     .group-bounds-row input[type=number] { width: 80px; }
@@ -107,6 +112,9 @@
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-allocation">Allokation</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-frontier">Effizienzgrenze</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-sparplan">Sparplan</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-risiko">Risiko</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-analyse">Analyse</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-szenarien">Szenarien</button></li>
   </ul>
 
   <div class="tab-content">
@@ -186,6 +194,8 @@
                 <label class="btn btn-outline-secondary btn-sm" for="obj-ret">Zielrendite</label>
                 <input type="radio" class="btn-check" name="objective" id="obj-risk" value="efficient_risk"/>
                 <label class="btn btn-outline-secondary btn-sm" for="obj-risk">Zielrisiko</label>
+                <input type="radio" class="btn-check" name="objective" id="obj-rp" value="risk_parity"/>
+                <label class="btn btn-outline-secondary btn-sm" for="obj-rp">Risk Parity</label>
               </div>
               <div id="target-input" style="display:none" class="mb-3">
                 <label class="form-label small" id="target-label">Zielwert</label>
@@ -220,7 +230,11 @@
           </div>
           <div id="rebalancing-card" class="card mt-3" style="display:none">
             <div class="card-body p-0">
-              <div class="px-3 pt-3 pb-1 small text-muted">Rebalancing — Differenz zum Zielportfolio</div>
+              <div class="px-3 pt-3 pb-1 d-flex align-items-center gap-3">
+                <span class="small text-muted">Rebalancing — Differenz zum Zielportfolio</span>
+                <label class="small text-muted mb-0 ms-auto">Toleranzband:</label>
+                <input type="number" id="rebalance-threshold" class="form-control form-control-sm" style="width:80px" value="5" min="0" max="50" step="1" oninput="applyRebalancingBands()"/> %
+              </div>
               <div style="overflow-x:auto">
                 <table class="table table-dark table-sm mb-0">
                   <thead><tr>
@@ -247,7 +261,145 @@
       <div class="card mt-3"><div class="card-body"><div id="chart-corr"></div></div></div>
     </div>
 
-    <!-- Tab 5: Frontier -->
+    <!-- Tab 5: Risiko -->
+    <div class="tab-pane fade" id="tab-risiko">
+      <div id="risiko-spinner" class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+      <div id="risiko-content" style="display:none">
+        <div class="row g-3 mb-3">
+          <div class="col-6 col-md-2"><div class="card metric-card py-3"><div class="label">Volatilität p.a.</div><div class="value" id="r-vol">—</div></div></div>
+          <div class="col-6 col-md-2"><div class="card metric-card py-3"><div class="label">VaR 95% (1d)</div><div class="value" id="r-var95">—</div></div></div>
+          <div class="col-6 col-md-2"><div class="card metric-card py-3"><div class="label">CVaR 95% (1d)</div><div class="value" id="r-cvar95">—</div></div></div>
+          <div class="col-6 col-md-2"><div class="card metric-card py-3"><div class="label">VaR 99% (1d)</div><div class="value" id="r-var99">—</div></div></div>
+          <div class="col-6 col-md-2"><div class="card metric-card py-3"><div class="label">Beta (MSCI World)</div><div class="value" id="r-beta">—</div></div></div>
+          <div class="col-6 col-md-2"><div class="card metric-card py-3"><div class="label">Alpha p.a.</div><div class="value" id="r-alpha">—</div></div></div>
+        </div>
+        <div class="row g-3 mb-3">
+          <div class="col-lg-6"><div class="card"><div class="card-body"><div id="chart-risk-contrib"></div></div></div></div>
+          <div class="col-lg-6"><div class="card"><div class="card-body"><div id="chart-var"></div></div></div></div>
+        </div>
+        <div class="card">
+          <div class="card-body">
+            <div class="section-title mb-3">Stress-Tests</div>
+            <table class="table table-dark table-sm">
+              <thead><tr><th>Szenario</th><th>Zeitraum</th><th class="text-end">Rendite</th><th class="text-end">Max DD</th><th>Datenbasis</th></tr></thead>
+              <tbody id="stress-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab 6: Analyse -->
+    <div class="tab-pane fade" id="tab-analyse">
+      <div id="analyse-spinner" class="text-center py-5"><div class="spinner-border text-primary"></div></div>
+      <div id="analyse-content" style="display:none">
+
+        <div class="section-title">Return Attribution</div>
+        <div class="card mb-4"><div class="card-body"><div id="chart-attribution"></div></div></div>
+
+        <hr class="border-secondary"/>
+        <div class="section-title">Dividenden-Projektion</div>
+        <div class="row g-3 mb-3">
+          <div class="col-auto"><div class="card px-4 py-2 metric-card"><div class="label">Gesamt Jahresertrag</div><div class="value" id="a-total-div">—</div></div></div>
+        </div>
+        <div class="card mb-4">
+          <div class="card-body p-0" style="overflow-x:auto">
+            <table class="table table-dark table-sm mb-0">
+              <thead><tr><th>ISIN</th><th>Name</th><th class="text-end">Dividendenrendite</th><th class="text-end">Jahresertrag €</th></tr></thead>
+              <tbody id="div-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <hr class="border-secondary"/>
+        <div class="section-title">TER-Analyse (Kostenquote)</div>
+        <div class="row g-3 mb-3">
+          <div class="col-auto"><div class="card px-4 py-2 metric-card"><div class="label">Gew. Portfolio-TER</div><div class="value" id="a-ter">—</div></div></div>
+          <div class="col-auto"><div class="card px-4 py-2 metric-card"><div class="label">Jahreskosten €</div><div class="value" id="a-ter-cost">—</div></div></div>
+        </div>
+        <div class="card mb-4">
+          <div class="card-body p-0" style="overflow-x:auto">
+            <table class="table table-dark table-sm mb-0">
+              <thead><tr><th>ISIN</th><th>Name</th><th class="text-end">TER %</th><th class="text-end">Jahreskosten €</th></tr></thead>
+              <tbody id="ter-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <hr class="border-secondary"/>
+        <div class="section-title">Steuer-Schätzung (unrealisierte Gewinne)</div>
+        <div class="row g-3 mb-3">
+          <div class="col-auto"><div class="card px-4 py-2 metric-card"><div class="label">Unrealisierter Gewinn</div><div class="value" id="a-total-gain">—</div></div></div>
+          <div class="col-auto"><div class="card px-4 py-2 metric-card"><div class="label">Est. Steuer (26,375%)</div><div class="value" id="a-total-tax">—</div></div></div>
+        </div>
+        <div class="card" id="tax-card">
+          <div class="card-body p-0" style="overflow-x:auto">
+            <table class="table table-dark table-sm mb-0">
+              <thead><tr><th>ISIN</th><th>Name</th><th class="text-end">Ø Kaufkurs</th><th class="text-end">Akt. Kurs</th><th class="text-end">Menge</th><th class="text-end">Unreal. Gewinn</th><th class="text-end">Est. Steuer</th></tr></thead>
+              <tbody id="tax-tbody"></tbody>
+            </table>
+          </div>
+          <p class="small text-muted px-3 pb-2 mb-0" id="tax-note"></p>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Tab 7: Szenarien -->
+    <div class="tab-pane fade" id="tab-szenarien">
+      <div class="row g-3">
+        <div class="col-lg-4">
+          <div class="card mb-3">
+            <div class="card-body">
+              <div class="section-title">Was-wäre-wenn</div>
+              <div id="whatif-rows"></div>
+              <button class="btn btn-outline-secondary btn-sm mt-2" onclick="addWhatifRow()">+ Position</button>
+              <button id="btn-whatif" class="btn btn-primary btn-sm mt-2 ms-2">Simulieren</button>
+              <div id="whatif-error" class="text-danger small mt-1"></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-body">
+              <div class="section-title">Monte Carlo Pfadsimulation</div>
+              <div class="param-row mb-2">
+                <label>Laufzeit: <strong id="mc-years-label">10 Jahre</strong></label>
+                <input type="range" id="mc-years" class="form-range" min="1" max="40" value="10"/>
+              </div>
+              <div class="param-row mb-2">
+                <label>Anzahl Pfade</label>
+                <select id="mc-npaths" class="form-select form-select-sm">
+                  <option value="100">100 (schnell)</option>
+                  <option value="500" selected>500</option>
+                  <option value="1000">1000 (langsam)</option>
+                </select>
+              </div>
+              <div class="param-row mb-2">
+                <label>Startwert (€)</label>
+                <input type="number" id="mc-startval" class="form-control form-control-sm" value="10000" min="1"/>
+              </div>
+              <button id="btn-mc" class="btn btn-primary w-100 mt-2">Pfade berechnen</button>
+              <div id="mc-error" class="text-danger small mt-1"></div>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-8">
+          <div class="row g-2 mb-3" id="whatif-metrics" style="display:none">
+            <div class="col-4"><div class="card metric-card py-3"><div class="label">Sharpe vorher</div><div class="value" id="wi-sharpe-orig">—</div></div></div>
+            <div class="col-4"><div class="card metric-card py-3"><div class="label">Sharpe nachher</div><div class="value" id="wi-sharpe-new">—</div></div></div>
+            <div class="col-4"><div class="card metric-card py-3"><div class="label">Δ Sharpe</div><div class="value" id="wi-delta">—</div></div></div>
+          </div>
+          <div class="card mb-3"><div class="card-body"><div id="chart-whatif"></div></div></div>
+          <div class="row g-2 mb-3" id="mc-metrics" style="display:none">
+            <div class="col-4"><div class="card metric-card py-3"><div class="label">Median-Endwert</div><div class="value" id="mc-median">—</div></div></div>
+            <div class="col-4"><div class="card metric-card py-3"><div class="label">5%-Quantil</div><div class="value" id="mc-p5">—</div></div></div>
+            <div class="col-4"><div class="card metric-card py-3"><div class="label">95%-Quantil</div><div class="value" id="mc-p95">—</div></div></div>
+          </div>
+          <div class="card"><div class="card-body"><div id="chart-mc"></div></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab 8: Frontier (moved) -->
     <div class="tab-pane fade" id="tab-frontier">
       <div class="d-flex align-items-center gap-2 mb-3">
         <button id="btn-frontier" class="btn btn-primary btn-sm">Berechnen</button>
@@ -559,6 +711,8 @@ function renderRebalancing(optWeights) {
     else if (delta > 0) { cls = "rebalance-buy"; label = `Kaufen`; }
     else { cls = "rebalance-sell"; label = `Verkaufen`; }
     const tr = document.createElement("tr");
+    tr.dataset.deltaEur = delta.toFixed(2);
+    tr.dataset.targetEur = targetEur.toFixed(2);
     tr.innerHTML = `
       <td class="small">${h.isin}</td>
       <td class="small">${h.name}</td>
@@ -860,6 +1014,7 @@ document.getElementById("tr-btn").addEventListener("click", async () => {
       document.getElementById("tr-step1").style.display = "block";
       document.getElementById("tr-step2").style.display = "none";
       perfLoaded = false; allocLoaded = false; frontierLoaded = false;
+      risikoLoaded = false; analyseLoaded = false;
       categoryOverrides = {}; lastOptWeights = null; benchmarkTraceIdx = null;
       await loadPortfolio();
     }
@@ -886,6 +1041,7 @@ document.getElementById("csvUpload").addEventListener("change", async (e) => {
   const data = await res.json();
   if (data.error) { showError(data.error); return; }
   perfLoaded = false; allocLoaded = false; frontierLoaded = false;
+  risikoLoaded = false; analyseLoaded = false;
   categoryOverrides = {}; lastOptWeights = null; benchmarkTraceIdx = null;
   await loadPortfolio();
 });
@@ -927,6 +1083,336 @@ document.querySelectorAll('input[name="objective"]').forEach(r => {
     document.getElementById("target-input").style.display = showTarget ? "block" : "none";
     document.getElementById("target-label").textContent = v === "efficient_return" ? "Zielrendite (z.B. 0.1 = 10%)" : "Zielrisiko (z.B. 0.15 = 15%)";
   });
+});
+
+// ---- New state ----
+let risikoLoaded = false;
+let analyseLoaded = false;
+
+// ---- Risiko tab ----
+async function loadRisiko() {
+  if (!portfolioData) return;
+  document.getElementById("risiko-spinner").style.display = "";
+  document.getElementById("risiko-content").style.display = "none";
+  try {
+    const res = await fetch("/api/risk");
+    const d = await res.json();
+    if (d.error) { showError(d.error); return; }
+
+    // Metric cards
+    const fmtPct = v => (v * 100).toFixed(2) + "%";
+    document.getElementById("r-vol").textContent = fmtPct(d.portfolio_vol);
+    document.getElementById("r-var95").textContent = fmtPct(d.var_95);
+    document.getElementById("r-cvar95").textContent = fmtPct(d.cvar_95);
+    document.getElementById("r-var99").textContent = fmtPct(d.var_99);
+    document.getElementById("r-beta").textContent = (d.beta ?? "—").toFixed ? d.beta.toFixed(2) : "—";
+    const alphaEl = document.getElementById("r-alpha");
+    alphaEl.textContent = d.alpha != null ? fmtPct(d.alpha) : "—";
+    if (d.alpha != null) alphaEl.style.color = d.alpha >= 0 ? "#4caf50" : "#ef5350";
+
+    // Risk contribution bar
+    Plotly.newPlot("chart-risk-contrib", [{
+      type: "bar", orientation: "h",
+      x: d.percentage.map(v => v * 100),
+      y: d.tickers,
+      marker: {color: "#6c8ebf"},
+      text: d.percentage.map(v => (v * 100).toFixed(1) + "%"),
+      textposition: "outside"
+    }], plotLayout("Risikobeitrag je Position (%)", {
+      margin: {t:40, r:80, b:50, l:120},
+      xaxis: {ticksuffix: "%"}
+    }), {responsive: true});
+
+    // VaR histogram
+    const returns = d.daily_returns;
+    Plotly.newPlot("chart-var", [
+      {type: "histogram", x: returns.map(v => v * 100), nbinsx: 60,
+       marker: {color: "#6c8ebf", opacity: 0.7}, name: "Tagesrenditen"},
+      {type: "scatter", mode: "lines",
+       x: [d.var_95 * 100, d.var_95 * 100], y: [0, returns.length / 10],
+       line: {color: "#ff9800", dash: "dash"}, name: "VaR 95%"},
+      {type: "scatter", mode: "lines",
+       x: [d.var_99 * 100, d.var_99 * 100], y: [0, returns.length / 10],
+       line: {color: "#ef5350", dash: "dash"}, name: "VaR 99%"}
+    ], plotLayout("Verteilung Tagesrenditen + VaR", {
+      xaxis: {ticksuffix: "%"},
+      barmode: "overlay"
+    }), {responsive: true});
+
+    // Stress test table
+    const tbody = document.getElementById("stress-tbody");
+    tbody.innerHTML = "";
+    for (const [name, sc] of Object.entries(d.stress)) {
+      const tr = document.createElement("tr");
+      if (!sc.available) {
+        tr.innerHTML = `<td>${name}</td><td>${sc.start ?? "—"} – ${sc.end ?? "—"}</td>
+          <td colspan="2" class="stress-na">Keine historischen Daten</td>
+          <td class="stress-na">Außerhalb 5J-Fenster</td>`;
+      } else {
+        const retFmt = (v) => `<span style="color:${v >= 0 ? '#4caf50' : '#ef5350'}">${(v * 100).toFixed(1)}%</span>`;
+        tr.innerHTML = `<td>${name}</td><td>${sc.start} – ${sc.end}</td>
+          <td class="text-end">${retFmt(sc.portfolio_return)}</td>
+          <td class="text-end" style="color:#ef5350">${(sc.max_drawdown * 100).toFixed(1)}%</td>
+          <td class="stress-ok">Echte Daten</td>`;
+      }
+      tbody.appendChild(tr);
+    }
+
+    document.getElementById("risiko-spinner").style.display = "none";
+    document.getElementById("risiko-content").style.display = "";
+    risikoLoaded = true;
+  } catch(e) {
+    showError("Risiko-Fehler: " + e.message);
+    document.getElementById("risiko-spinner").style.display = "none";
+  }
+}
+
+// ---- Analyse tab ----
+async function loadAnalyse() {
+  if (!portfolioData) return;
+  document.getElementById("analyse-spinner").style.display = "";
+  document.getElementById("analyse-content").style.display = "none";
+  try {
+    const [attrRes, incRes, taxRes] = await Promise.all([
+      fetch("/api/attribution"),
+      fetch("/api/income"),
+      fetch("/api/tax-estimate")
+    ]);
+    const [attr, inc, tax] = await Promise.all([attrRes.json(), incRes.json(), taxRes.json()]);
+
+    // Return Attribution chart
+    if (!attr.error) {
+      const colors = attr.contributions.map(v => v >= 0 ? "#4caf50" : "#ef5350");
+      Plotly.newPlot("chart-attribution", [{
+        type: "bar", orientation: "h",
+        x: attr.contributions.map(v => v * 100),
+        y: attr.tickers,
+        marker: {color: colors},
+        text: attr.contributions.map(v => (v * 100).toFixed(1) + "%"),
+        textposition: "outside"
+      }], plotLayout("Return Attribution — Beitrag je Position (%)", {
+        margin: {t:40, r:80, b:50, l:120},
+        xaxis: {ticksuffix: "%"}
+      }), {responsive: true});
+    }
+
+    // Dividends table
+    if (!inc.error) {
+      const fmtEur = v => v.toLocaleString("de-DE", {minimumFractionDigits:2, maximumFractionDigits:2}) + " €";
+      document.getElementById("a-total-div").textContent = fmtEur(inc.total_annual_dividend);
+      const divTbody = document.getElementById("div-tbody");
+      divTbody.innerHTML = "";
+      for (const p of inc.positions) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td class="font-monospace small">${p.isin}</td><td>${p.name ?? p.isin}</td>
+          <td class="text-end">${(p.dividend_yield * 100).toFixed(2)}%</td>
+          <td class="text-end">${fmtEur(p.annual_dividend)}</td>`;
+        divTbody.appendChild(tr);
+      }
+
+      // TER table
+      document.getElementById("a-ter").textContent = (inc.portfolio_ter * 100).toFixed(3) + "%";
+      document.getElementById("a-ter-cost").textContent = fmtEur(inc.total_annual_ter_cost);
+      const terTbody = document.getElementById("ter-tbody");
+      terTbody.innerHTML = "";
+      for (const p of inc.positions) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td class="font-monospace small">${p.isin}</td><td>${p.name ?? p.isin}</td>
+          <td class="text-end">${(p.ter * 100).toFixed(3)}%</td>
+          <td class="text-end">${fmtEur(p.annual_ter_cost)}</td>`;
+        terTbody.appendChild(tr);
+      }
+    }
+
+    // Tax table
+    if (!tax.error) {
+      const fmtEur = v => v.toLocaleString("de-DE", {minimumFractionDigits:2, maximumFractionDigits:2}) + " €";
+      document.getElementById("a-total-gain").textContent = fmtEur(tax.total_unrealized_gain);
+      document.getElementById("a-total-tax").textContent = fmtEur(tax.total_tax_estimate);
+      const taxTbody = document.getElementById("tax-tbody");
+      taxTbody.innerHTML = "";
+      for (const p of tax.positions) {
+        const gainColor = p.unrealized_gain >= 0 ? "#4caf50" : "#ef5350";
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td class="font-monospace small">${p.isin}</td><td>${p.name ?? p.isin}</td>
+          <td class="text-end">${p.avg_cost != null ? fmtEur(p.avg_cost) : "—"}</td>
+          <td class="text-end">${fmtEur(p.current_price)}</td>
+          <td class="text-end">${p.quantity}</td>
+          <td class="text-end" style="color:${gainColor}">${fmtEur(p.unrealized_gain)}</td>
+          <td class="text-end">${fmtEur(p.tax_estimate)}</td>`;
+        taxTbody.appendChild(tr);
+      }
+      if (tax.note) document.getElementById("tax-note").textContent = tax.note;
+    }
+
+    document.getElementById("analyse-spinner").style.display = "none";
+    document.getElementById("analyse-content").style.display = "";
+    analyseLoaded = true;
+  } catch(e) {
+    showError("Analyse-Fehler: " + e.message);
+    document.getElementById("analyse-spinner").style.display = "none";
+  }
+}
+
+// ---- Was-wäre-wenn ----
+function addWhatifRow() {
+  const container = document.getElementById("whatif-rows");
+  const row = document.createElement("div");
+  row.className = "d-flex gap-2 mb-2 whatif-row";
+  row.innerHTML = `
+    <input type="text" class="form-control form-control-sm wi-isin" placeholder="ISIN" style="flex:2"/>
+    <input type="number" class="form-control form-control-sm wi-amount" placeholder="€ (+ kaufen / - verkaufen)" step="100"/>
+    <button class="btn btn-outline-secondary btn-sm" onclick="this.closest('.whatif-row').remove()">✕</button>`;
+  container.appendChild(row);
+}
+
+async function runWhatIf() {
+  if (!portfolioData) return;
+  const errDiv = document.getElementById("whatif-error");
+  errDiv.textContent = "";
+  const rows = document.querySelectorAll(".whatif-row");
+  const modifications = [];
+  for (const row of rows) {
+    const isin = row.querySelector(".wi-isin").value.trim();
+    const amount = parseFloat(row.querySelector(".wi-amount").value);
+    if (isin && !isNaN(amount)) modifications.push({isin, amount_eur: amount});
+  }
+  if (!modifications.length) { errDiv.textContent = "Bitte mindestens eine Position eingeben."; return; }
+
+  const btn = document.getElementById("btn-whatif");
+  btn.disabled = true;
+  try {
+    const res = await fetch("/api/whatif", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({modifications})
+    });
+    const d = await res.json();
+    if (d.error) { errDiv.textContent = d.error; return; }
+
+    // Grouped bar: before / after allocation
+    const tickers = d.original_weights ? Object.keys(d.original_weights) : [];
+    const before = tickers.map(t => (d.original_weights[t] * 100).toFixed(2));
+    const after = tickers.map(t => ((d.new_weights[t] ?? 0) * 100).toFixed(2));
+    // Also add any new tickers not in original
+    const newTickers = Object.keys(d.new_weights).filter(t => !tickers.includes(t));
+    const allTickers = [...tickers, ...newTickers];
+    const allBefore = allTickers.map(t => (d.original_weights[t] ?? 0) * 100);
+    const allAfter = allTickers.map(t => (d.new_weights[t] ?? 0) * 100);
+
+    Plotly.newPlot("chart-whatif", [
+      {type: "bar", name: "Vorher", x: allTickers, y: allBefore, marker: {color: "#6c8ebf"}},
+      {type: "bar", name: "Nachher", x: allTickers, y: allAfter, marker: {color: "#4caf50"}}
+    ], plotLayout("Allokation Vorher / Nachher (%)", {
+      barmode: "group",
+      yaxis: {ticksuffix: "%"}
+    }), {responsive: true});
+
+    const fmtN = v => v != null ? v.toFixed(2) : "—";
+    document.getElementById("wi-sharpe-orig").textContent = fmtN(d.original_sharpe);
+    document.getElementById("wi-sharpe-new").textContent = fmtN(d.new_sharpe);
+    const deltaEl = document.getElementById("wi-delta");
+    const delta = d.delta_sharpe;
+    deltaEl.textContent = delta != null ? (delta >= 0 ? "+" : "") + delta.toFixed(2) : "—";
+    if (delta != null) deltaEl.style.color = delta >= 0 ? "#4caf50" : "#ef5350";
+    document.getElementById("whatif-metrics").style.display = "";
+  } catch(e) {
+    errDiv.textContent = "Fehler: " + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ---- Monte Carlo ----
+async function runMonteCarlo() {
+  if (!portfolioData) return;
+  const errDiv = document.getElementById("mc-error");
+  errDiv.textContent = "";
+  const btn = document.getElementById("btn-mc");
+  btn.disabled = true;
+  btn.textContent = "Berechne…";
+  try {
+    const years = parseInt(document.getElementById("mc-years").value);
+    const n_paths = parseInt(document.getElementById("mc-npaths").value);
+    const start_value = parseFloat(document.getElementById("mc-startval").value);
+    const res = await fetch("/api/monte-carlo", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({years, n_paths, start_value})
+    });
+    const d = await res.json();
+    if (d.error) { errDiv.textContent = d.error; return; }
+
+    // Build x-axis (years)
+    const n = d.percentiles["50"].length;
+    const xs = Array.from({length: n}, (_, i) => i / 252);
+
+    const fmtEur = v => v.toLocaleString("de-DE", {maximumFractionDigits: 0}) + " €";
+
+    // Fan chart with fill tonexty
+    const traces = [
+      {x: xs, y: d.percentiles["5"],  name: "5%",  line: {color:"#ef5350", width:1}, mode:"lines"},
+      {x: xs, y: d.percentiles["25"], name: "25%", line: {color:"#ff9800", width:1}, mode:"lines",
+       fill: "tonexty", fillcolor: "rgba(239,83,80,0.15)"},
+      {x: xs, y: d.percentiles["50"], name: "Median", line: {color:"#4caf50", width:2}, mode:"lines",
+       fill: "tonexty", fillcolor: "rgba(255,152,0,0.15)"},
+      {x: xs, y: d.percentiles["75"], name: "75%", line: {color:"#ff9800", width:1}, mode:"lines",
+       fill: "tonexty", fillcolor: "rgba(76,175,80,0.15)"},
+      {x: xs, y: d.percentiles["95"], name: "95%", line: {color:"#4caf50", width:1}, mode:"lines",
+       fill: "tonexty", fillcolor: "rgba(255,152,0,0.15)"},
+    ];
+    Plotly.newPlot("chart-mc", traces, plotLayout(`Monte Carlo (${n_paths} Pfade, ${years} Jahre)`, {
+      xaxis: {title: "Jahre"},
+      yaxis: {tickprefix: "€", tickformat: ",.0f"}
+    }), {responsive: true});
+
+    const last = arr => arr[arr.length - 1];
+    document.getElementById("mc-median").textContent = fmtEur(last(d.percentiles["50"]));
+    document.getElementById("mc-p5").textContent = fmtEur(last(d.percentiles["5"]));
+    document.getElementById("mc-p95").textContent = fmtEur(last(d.percentiles["95"]));
+    document.getElementById("mc-metrics").style.display = "";
+  } catch(e) {
+    errDiv.textContent = "Fehler: " + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Pfade berechnen";
+  }
+}
+
+// ---- Rebalancing bands ----
+function applyRebalancingBands() {
+  const thresh = parseFloat(document.getElementById("rebalance-threshold").value) / 100;
+  const rows = document.querySelectorAll("#rebalancing-body tr");
+  rows.forEach(tr => {
+    const deltaCell = tr.cells[5];
+    const targetCell = tr.cells[4];
+    if (!deltaCell || !targetCell) return;
+    // Parse delta € and target %
+    const deltaText = deltaCell.textContent.replace(/[€\s,]/g, "").replace(".", "").replace(",", ".");
+    const delta = parseFloat(tr.dataset.deltaEur ?? "0");
+    const target = parseFloat(tr.dataset.targetEur ?? "1");
+    if (target !== 0 && Math.abs(delta / target) > thresh) {
+      tr.classList.add("rebalance-warn");
+    } else {
+      tr.classList.remove("rebalance-warn");
+    }
+  });
+}
+
+// ---- Lazy-load additions ----
+document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn => {
+  btn.addEventListener("shown.bs.tab", async (e) => {
+    const target = e.target.getAttribute("data-bs-target");
+    if (target === "#tab-risiko" && !risikoLoaded) await loadRisiko();
+    if (target === "#tab-analyse" && !analyseLoaded) await loadAnalyse();
+  });
+});
+
+// ---- Event listeners ----
+document.getElementById("btn-whatif").addEventListener("click", runWhatIf);
+document.getElementById("btn-mc").addEventListener("click", runMonteCarlo);
+document.getElementById("mc-years").addEventListener("input", e => {
+  document.getElementById("mc-years-label").textContent = e.target.value + " Jahre";
 });
 
 // Init
