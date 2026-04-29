@@ -6,6 +6,8 @@ from optimizer import (
     build_sector_constraints,
     classify_asset,
     compute_beta_alpha,
+    compute_buy_recommendation,
+    compute_etf_overlap,
     compute_frontier,
     compute_performance,
     compute_return_attribution,
@@ -402,3 +404,51 @@ def test_compute_risk_parity_equal_rc():
     n = len(w)
     for rci in rc:
         assert abs(rci - 1/n) < 0.05
+
+
+# ---- compute_etf_overlap ----
+
+def test_compute_etf_overlap_returns_keys():
+    price_data = _make_price_data_opt()
+    result = compute_etf_overlap(price_data)
+    assert "tickers" in result
+    assert "pairs" in result
+    assert "diversification_score" in result
+
+
+def test_compute_etf_overlap_score_range():
+    price_data = _make_price_data_opt()
+    result = compute_etf_overlap(price_data)
+    assert 0.0 <= result["diversification_score"] <= 1.0
+
+
+def test_compute_etf_overlap_single_asset():
+    dates = pd.date_range("2020-01-01", periods=100, freq="B")
+    price_data = pd.DataFrame({"A": np.cumprod(1 + np.random.randn(100) * 0.01)}, index=dates)
+    result = compute_etf_overlap(price_data)
+    assert result["pairs"] == []
+
+
+# ---- compute_buy_recommendation ----
+
+def test_compute_buy_recommendation_buys_sum():
+    current = {"A": 1000.0, "B": 500.0}
+    target = {"A": 0.6, "B": 0.4}
+    result = compute_buy_recommendation(current, target, 500.0)
+    assert result["total_buy"] == pytest.approx(500.0, abs=1.0)
+    assert result["unused"] == pytest.approx(0.0, abs=1.0)
+
+
+def test_compute_buy_recommendation_no_selling():
+    current = {"A": 800.0, "B": 200.0}
+    target = {"A": 0.3, "B": 0.7}
+    result = compute_buy_recommendation(current, target, 100.0)
+    for buy in result["buys"].values():
+        assert buy >= 0.0
+
+
+def test_compute_buy_recommendation_new_weights_sum():
+    current = {"A": 500.0, "B": 500.0}
+    target = {"A": 0.7, "B": 0.3}
+    result = compute_buy_recommendation(current, target, 200.0)
+    assert sum(result["new_weights"].values()) == pytest.approx(1.0, abs=1e-6)

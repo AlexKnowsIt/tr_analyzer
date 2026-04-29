@@ -16,6 +16,8 @@ from optimizer import (
     build_sector_constraints,
     classify_asset,
     compute_beta_alpha,
+    compute_buy_recommendation,
+    compute_etf_overlap,
     compute_frontier,
     compute_performance,
     compute_return_attribution,
@@ -717,6 +719,116 @@ def api_whatif():
         "delta_sharpe": new_perf["sharpe"] - orig_perf["sharpe"],
         "names": names,
     })
+
+
+@app.route("/api/overlap")
+def api_overlap():
+    df = _load_portfolio()
+    if df is None:
+        return jsonify({"error": "no_portfolio"}), 422
+    tickers = df["ISIN"].tolist()
+    if len(tickers) < 2:
+        return jsonify({"tickers": tickers, "pairs": [], "diversification_score": 1.0})
+    try:
+        prices = _fetch_prices(tickers)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 422
+    result = compute_etf_overlap(prices)
+    names = {row["ISIN"]: row.get("Name", row["ISIN"]) for _, row in df.iterrows()}
+    for pair in result["pairs"]:
+        pair["name_a"] = names.get(pair["a"], pair["a"])
+        pair["name_b"] = names.get(pair["b"], pair["b"])
+    return jsonify(result)
+
+
+@app.route("/api/buy-recommendation", methods=["POST"])
+def api_buy_recommendation():
+    data = request.get_json() or {}
+    target_weights = data.get("target_weights", {})
+    try:
+        invest_amount = float(data.get("invest_amount", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "invest_amount must be numeric"}), 422
+    if not target_weights:
+        return jsonify({"error": "target_weights required"}), 422
+    if invest_amount <= 0:
+        return jsonify({"error": "invest_amount must be > 0"}), 422
+    df = _load_portfolio()
+    if df is None:
+        return jsonify({"error": "no_portfolio"}), 422
+    current_net_values = {row["ISIN"]: float(row["netValue"]) for _, row in df.iterrows()}
+    names = {row["ISIN"]: row.get("Name", row["ISIN"]) for _, row in df.iterrows()}
+    result = compute_buy_recommendation(current_net_values, target_weights, invest_amount)
+    if "error" in result:
+        return jsonify(result), 422
+    result["names"] = names
+    return jsonify(result)
+
+
+@app.route("/api/insights")
+def api_insights():
+    df = _load_portfolio()
+    if df is None:
+        return jsonify({"insights": []})
+    insights = []
+    total = float(df["netValue"].sum())
+    if total <= 0:
+        return jsonify({"insights": []})
+    weights = {row["ISIN"]: float(row["netValue"]) / total for _, row in df.iterrows()}
+    names = {row["ISIN"]: row.get("Name", row["ISIN"]) for _, row in df.iterrows()}
+
+    # Herfindahl concentration index
+    hhi = sum(w ** 2 for w in weights.values())
+    if hhi > 0.35:
+        top = max(weights, key=weights.get)
+        insights.append({
+            "type": "concentration", "severity": "warning",
+            "message": f"Konzentration hoch (HHI {hhi:.2f}) — {names.get(top, top)} dominiert.",
+            "action": "Optimizer → Min Volatilität für bessere Streuung.",
+        })
+
+    # Single position > 30%
+    for isin, w in weights.items():
+        if w > 0.30:
+            insights.append({
+                "type": "overweight", "severity": "warning",
+                "message": f"{names.get(isin, isin)}: {w*100:.1f}% — Einzelposition über 30%.",
+                "action": "Rebalancing oder Optimizer nutzen.",
+            })
+
+    # Too few positions
+    if len(df) < 3:
+        insights.append({
+            "type": "diversification", "severity": "info",
+            "message": f"Nur {len(df)} Position(en) — Diversifikation sehr begrenzt.",
+            "action": "Weitere ETFs oder Assetklassen hinzufügen.",
+        })
+
+    # Overlap check
+    tickers = df["ISIN"].tolist()
+    if len(tickers) >= 2:
+        try:
+            prices = _fetch_prices(tickers)
+            overlap = compute_etf_overlap(prices)
+            for pair in overlap["pairs"]:
+                if pair["level"] == "high":
+                    na = names.get(pair["a"], pair["a"])
+                    nb = names.get(pair["b"], pair["b"])
+                    insights.append({
+                        "type": "overlap", "severity": "warning",
+                        "message": f"Hohe Überschneidung: {na} ↔ {nb} (Korr. {pair['correlation']:.2f})",
+                        "action": "Allokation-Tab → Overlap für Details.",
+                    })
+        except Exception:
+            pass
+
+    if not insights:
+        insights.append({
+            "type": "ok", "severity": "ok",
+            "message": "Keine kritischen Auffälligkeiten — Portfolio sieht solide aus.",
+            "action": "",
+        })
+    return jsonify({"insights": insights})
 
 
 if __name__ == "__main__":

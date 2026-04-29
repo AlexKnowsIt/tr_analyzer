@@ -28,7 +28,13 @@
     .metric-card .label { font-size: 0.78rem; color: #aaa; text-transform: uppercase; letter-spacing: 0.05em; }
     #chart-perf, #chart-sharpe, #chart-sector, #chart-region, #chart-corr, #chart-weights,
     #chart-frontier, #chart-sparplan, #chart-sparrate,
-    #chart-risk-contrib, #chart-var, #chart-attribution, #chart-mc, #chart-whatif { min-height: 300px; }
+    #chart-risk-contrib, #chart-var, #chart-attribution, #chart-mc, #chart-whatif,
+    #chart-target-alloc { min-height: 300px; }
+    .insight-ok { border-left: 3px solid #4caf50; }
+    .insight-warning { border-left: 3px solid #ff9800; }
+    .insight-info { border-left: 3px solid #6c8ebf; }
+    .overlap-high { color: #ef5350; font-weight: 600; }
+    .overlap-medium { color: #ff9800; }
     .rebalance-buy { color: #4caf50; font-weight: 600; }
     .rebalance-sell { color: #ef5350; font-weight: 600; }
     .rebalance-ok { color: #aaa; }
@@ -115,6 +121,7 @@
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-risiko">Risiko</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-analyse">Analyse</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-szenarien">Szenarien</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-ziele">Ziele</button></li>
   </ul>
 
   <div class="tab-content">
@@ -128,6 +135,10 @@
             <div class="value" id="total-value">—</div>
           </div>
         </div>
+      </div>
+      <div id="insights-container" class="mb-3" style="display:none">
+        <div class="section-title">Handlungsempfehlungen</div>
+        <div id="insights-list"></div>
       </div>
       <div class="card">
         <div class="card-body p-0">
@@ -259,6 +270,19 @@
         <div class="col-md-6"><div class="card"><div class="card-body"><div id="chart-region"></div></div></div></div>
       </div>
       <div class="card mt-3"><div class="card-body"><div id="chart-corr"></div></div></div>
+      <div class="card mt-3" id="overlap-card" style="display:none">
+        <div class="card-body">
+          <div class="d-flex align-items-center gap-3 mb-2">
+            <div class="section-title mb-0">ETF-Überschneidungsanalyse</div>
+            <span class="ms-auto small text-muted">Diversifikations-Score: <strong id="div-score">—</strong></span>
+          </div>
+          <div id="overlap-none" class="text-muted small d-none">Keine signifikanten Überschneidungen (Korrelation &lt; 0.7) gefunden.</div>
+          <table class="table table-dark table-sm mb-0" id="overlap-table" style="display:none">
+            <thead><tr><th>Position A</th><th>Position B</th><th class="text-end">Korrelation</th><th>Risiko</th></tr></thead>
+            <tbody id="overlap-tbody"></tbody>
+          </table>
+        </div>
+      </div>
     </div>
 
     <!-- Tab 5: Risiko -->
@@ -342,6 +366,33 @@
           <p class="small text-muted px-3 pb-2 mb-0" id="tax-note"></p>
         </div>
 
+        <hr class="border-secondary"/>
+        <div class="section-title">Freistellungsauftrag-Tracker</div>
+        <div class="row g-3 mb-3 align-items-end">
+          <div class="col-auto">
+            <label class="form-label small text-muted">Freibetrag (€)</label>
+            <input type="number" id="fsa-limit" class="form-control form-control-sm" value="1000" min="0" max="2000" step="1" style="width:120px"/>
+          </div>
+          <div class="col-auto">
+            <label class="form-label small text-muted">Bereits realisiert (€)</label>
+            <input type="number" id="fsa-realized" class="form-control form-control-sm" value="0" min="0" step="1" style="width:120px"/>
+          </div>
+          <div class="col-auto">
+            <button class="btn btn-outline-secondary btn-sm" onclick="updateFSA()">Berechnen</button>
+          </div>
+        </div>
+        <div class="row g-3 mb-3" id="fsa-cards" style="display:none">
+          <div class="col-auto"><div class="card px-4 py-2 metric-card"><div class="label">Freibetrag</div><div class="value" id="fsa-v-limit">—</div></div></div>
+          <div class="col-auto"><div class="card px-4 py-2 metric-card"><div class="label">Realisiert</div><div class="value" id="fsa-v-realized">—</div></div></div>
+          <div class="col-auto"><div class="card px-4 py-2 metric-card"><div class="label">Proj. Dividenden</div><div class="value" id="fsa-v-div">—</div></div></div>
+          <div class="col-auto"><div class="card px-4 py-2 metric-card"><div class="label">Gesamt genutzt</div><div class="value" id="fsa-v-used">—</div></div></div>
+          <div class="col-auto"><div class="card px-4 py-2 metric-card"><div class="label">Verbleibend</div><div class="value" id="fsa-v-remaining">—</div></div></div>
+        </div>
+        <div class="progress mb-3" id="fsa-bar-container" style="display:none;height:20px;background:#2a2d3a">
+          <div class="progress-bar" id="fsa-bar" role="progressbar" style="width:0%"></div>
+        </div>
+        <p class="small text-muted" id="fsa-note"></p>
+
       </div>
     </div>
 
@@ -395,6 +446,57 @@
             <div class="col-4"><div class="card metric-card py-3"><div class="label">95%-Quantil</div><div class="value" id="mc-p95">—</div></div></div>
           </div>
           <div class="card"><div class="card-body"><div id="chart-mc"></div></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab: Ziele -->
+    <div class="tab-pane fade" id="tab-ziele">
+      <div class="row g-3">
+        <div class="col-lg-5">
+          <div class="card mb-3">
+            <div class="card-body">
+              <div class="section-title">Zielallokation</div>
+              <p class="small text-muted">Definiere dein Wunschportfolio. Summe der Zielgewichte muss 100% ergeben.</p>
+              <table class="table table-dark table-sm mb-2">
+                <thead><tr><th>ISIN</th><th>Name</th><th class="text-end">Aktuell %</th><th class="text-end" style="width:110px">Ziel %</th></tr></thead>
+                <tbody id="target-alloc-body"></tbody>
+              </table>
+              <div class="d-flex align-items-center gap-2 mt-2">
+                <span class="small text-muted">Summe Zielgewichte:</span>
+                <strong id="target-sum" class="small">0%</strong>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-body">
+              <div class="section-title">Nachkauf-Empfehlung</div>
+              <div class="param-row mb-3">
+                <label class="small text-muted">Investitionsbetrag (€)</label>
+                <input type="number" id="invest-amount" class="form-control form-control-sm" value="500" min="1" step="50"/>
+              </div>
+              <button id="btn-buy-rec" class="btn btn-primary w-100">Kaufempfehlung berechnen</button>
+              <div id="buy-error" class="text-danger small mt-1"></div>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-7">
+          <div class="row g-2 mb-3" id="buy-metrics" style="display:none">
+            <div class="col-4"><div class="card metric-card py-3"><div class="label">Zu investieren</div><div class="value" id="buy-total">—</div></div></div>
+            <div class="col-4"><div class="card metric-card py-3"><div class="label">Nicht einsetzbar</div><div class="value" id="buy-unused">—</div></div></div>
+            <div class="col-4"><div class="card metric-card py-3"><div class="label">Ø Abweichung</div><div class="value" id="buy-avgdev">—</div></div></div>
+          </div>
+          <div class="card mb-3" id="buy-table-card" style="display:none">
+            <div class="card-body p-0" style="overflow-x:auto">
+              <table class="table table-dark table-sm mb-0">
+                <thead><tr><th>ISIN</th><th>Name</th><th class="text-end">Kaufbetrag €</th><th class="text-end">Ziel %</th><th class="text-end">Nachher %</th><th class="text-end">Abweichung</th></tr></thead>
+                <tbody id="buy-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card" id="buy-chart-card" style="display:none">
+            <div class="card-body"><div id="chart-target-alloc" style="min-height:280px"></div></div>
+          </div>
         </div>
       </div>
     </div>
@@ -528,6 +630,7 @@ async function loadPortfolio() {
     portfolioData = data;
     renderHoldings(data);
     initGroupBounds(data);
+    loadInsights();
   } catch(e) {
     showError("Fehler beim Laden des Portfolios: " + e.message);
   }
@@ -964,6 +1067,7 @@ async function loadAllocation() {
     }), {responsive:true});
   }
   allocLoaded = true;
+  loadOverlap();
 }
 
 // ---- TR Import ----
@@ -1014,8 +1118,9 @@ document.getElementById("tr-btn").addEventListener("click", async () => {
       document.getElementById("tr-step1").style.display = "block";
       document.getElementById("tr-step2").style.display = "none";
       perfLoaded = false; allocLoaded = false; frontierLoaded = false;
-      risikoLoaded = false; analyseLoaded = false;
+      risikoLoaded = false; analyseLoaded = false; zielLoaded = false;
       categoryOverrides = {}; lastOptWeights = null; benchmarkTraceIdx = null;
+      resetBatch3State();
       await loadPortfolio();
     }
   } finally {
@@ -1088,6 +1193,8 @@ document.querySelectorAll('input[name="objective"]').forEach(r => {
 // ---- New state ----
 let risikoLoaded = false;
 let analyseLoaded = false;
+let zielLoaded = false;
+let targetWeights = {};
 
 // ---- Risiko tab ----
 async function loadRisiko() {
@@ -1290,15 +1397,14 @@ async function runWhatIf() {
     const d = await res.json();
     if (d.error) { errDiv.textContent = d.error; return; }
 
-    // Grouped bar: before / after allocation
-    const tickers = d.original_weights ? Object.keys(d.original_weights) : [];
-    const before = tickers.map(t => (d.original_weights[t] * 100).toFixed(2));
-    const after = tickers.map(t => ((d.new_weights[t] ?? 0) * 100).toFixed(2));
-    // Also add any new tickers not in original
-    const newTickers = Object.keys(d.new_weights).filter(t => !tickers.includes(t));
+    // API returns {original: {weights, sharpe}, modified: {weights, sharpe}, delta_sharpe}
+    const origW = d.original?.weights ?? {};
+    const modW = d.modified?.weights ?? {};
+    const tickers = Object.keys(origW);
+    const newTickers = Object.keys(modW).filter(t => !tickers.includes(t));
     const allTickers = [...tickers, ...newTickers];
-    const allBefore = allTickers.map(t => (d.original_weights[t] ?? 0) * 100);
-    const allAfter = allTickers.map(t => (d.new_weights[t] ?? 0) * 100);
+    const allBefore = allTickers.map(t => (origW[t] ?? 0) * 100);
+    const allAfter = allTickers.map(t => (modW[t] ?? 0) * 100);
 
     Plotly.newPlot("chart-whatif", [
       {type: "bar", name: "Vorher", x: allTickers, y: allBefore, marker: {color: "#6c8ebf"}},
@@ -1309,8 +1415,8 @@ async function runWhatIf() {
     }), {responsive: true});
 
     const fmtN = v => v != null ? v.toFixed(2) : "—";
-    document.getElementById("wi-sharpe-orig").textContent = fmtN(d.original_sharpe);
-    document.getElementById("wi-sharpe-new").textContent = fmtN(d.new_sharpe);
+    document.getElementById("wi-sharpe-orig").textContent = fmtN(d.original?.sharpe);
+    document.getElementById("wi-sharpe-new").textContent = fmtN(d.modified?.sharpe);
     const deltaEl = document.getElementById("wi-delta");
     const delta = d.delta_sharpe;
     deltaEl.textContent = delta != null ? (delta >= 0 ? "+" : "") + delta.toFixed(2) : "—";
@@ -1414,6 +1520,219 @@ document.getElementById("btn-mc").addEventListener("click", runMonteCarlo);
 document.getElementById("mc-years").addEventListener("input", e => {
   document.getElementById("mc-years-label").textContent = e.target.value + " Jahre";
 });
+document.getElementById("btn-buy-rec").addEventListener("click", runBuyRecommendation);
+
+// ---- Insights (Übersicht) ----
+async function loadInsights() {
+  try {
+    const res = await fetch("/api/insights");
+    const d = await res.json();
+    if (!d.insights?.length) return;
+    const container = document.getElementById("insights-list");
+    container.innerHTML = "";
+    for (const item of d.insights) {
+      const cls = item.severity === "ok" ? "insight-ok" : item.severity === "warning" ? "insight-warning" : "insight-info";
+      const icon = item.severity === "ok" ? "✅" : item.severity === "warning" ? "⚠️" : "ℹ️";
+      const div = document.createElement("div");
+      div.className = `card mb-2 ps-3 py-2 ${cls}`;
+      div.innerHTML = `<div class="small"><strong>${icon} ${item.message}</strong>${item.action ? `<span class="text-muted ms-2">→ ${item.action}</span>` : ""}</div>`;
+      container.appendChild(div);
+    }
+    document.getElementById("insights-container").style.display = "";
+  } catch(e) { /* non-critical */ }
+}
+
+// ---- Overlap (Allokation tab) ----
+async function loadOverlap() {
+  try {
+    const res = await fetch("/api/overlap");
+    const d = await res.json();
+    if (d.error) return;
+    document.getElementById("div-score").textContent = (d.diversification_score * 100).toFixed(0) + "%";
+    const card = document.getElementById("overlap-card");
+    card.style.display = "";
+    if (!d.pairs?.length) {
+      document.getElementById("overlap-none").classList.remove("d-none");
+      return;
+    }
+    const tbody = document.getElementById("overlap-tbody");
+    tbody.innerHTML = "";
+    for (const p of d.pairs) {
+      const cls = p.level === "high" ? "overlap-high" : "overlap-medium";
+      const label = p.level === "high" ? "Hoch ⚠️" : "Mittel";
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td class="small">${p.name_a ?? p.a}<br><span class="text-muted" style="font-size:0.75rem">${p.a}</span></td>
+        <td class="small">${p.name_b ?? p.b}<br><span class="text-muted" style="font-size:0.75rem">${p.b}</span></td>
+        <td class="text-end ${cls}">${(p.correlation * 100).toFixed(1)}%</td>
+        <td class="${cls}">${label}</td>`;
+      tbody.appendChild(tr);
+    }
+    document.getElementById("overlap-table").style.display = "";
+  } catch(e) { /* non-critical */ }
+}
+
+// ---- Ziele tab ----
+function loadZiele() {
+  if (!portfolioData) return;
+  zielLoaded = true;
+  const tbody = document.getElementById("target-alloc-body");
+  tbody.innerHTML = "";
+  for (const h of portfolioData.holdings) {
+    const current = (h.weight * 100).toFixed(1);
+    const saved = targetWeights[h.isin] != null ? (targetWeights[h.isin] * 100).toFixed(1) : current;
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td class="font-monospace small">${h.isin}</td>
+      <td class="small">${h.name}</td>
+      <td class="text-end">${current}%</td>
+      <td class="text-end">
+        <input type="number" class="form-control form-control-sm text-end target-input"
+          data-isin="${h.isin}" value="${saved}" min="0" max="100" step="0.1" style="width:90px"/>
+      </td>`;
+    tbody.appendChild(tr);
+  }
+  document.querySelectorAll(".target-input").forEach(inp => {
+    inp.addEventListener("input", updateTargetSum);
+  });
+  updateTargetSum();
+}
+
+function updateTargetSum() {
+  let sum = 0;
+  document.querySelectorAll(".target-input").forEach(inp => {
+    sum += parseFloat(inp.value) || 0;
+    targetWeights[inp.dataset.isin] = (parseFloat(inp.value) || 0) / 100;
+  });
+  const el = document.getElementById("target-sum");
+  el.textContent = sum.toFixed(1) + "%";
+  el.style.color = Math.abs(sum - 100) < 0.1 ? "#4caf50" : (Math.abs(sum - 100) < 5 ? "#ff9800" : "#ef5350");
+}
+
+async function runBuyRecommendation() {
+  const errDiv = document.getElementById("buy-error");
+  errDiv.textContent = "";
+  const invest = parseFloat(document.getElementById("invest-amount").value);
+  if (isNaN(invest) || invest <= 0) { errDiv.textContent = "Bitte gültigen Investitionsbetrag eingeben."; return; }
+  const tw = {...targetWeights};
+  const twSum = Object.values(tw).reduce((a, b) => a + b, 0);
+  if (twSum < 0.01) { errDiv.textContent = "Bitte Zielgewichte eingeben."; return; }
+
+  const btn = document.getElementById("btn-buy-rec");
+  btn.disabled = true;
+  try {
+    const res = await fetch("/api/buy-recommendation", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({target_weights: tw, invest_amount: invest})
+    });
+    const d = await res.json();
+    if (d.error) { errDiv.textContent = d.error; return; }
+
+    const fmtEur = v => v.toLocaleString("de-DE", {minimumFractionDigits:2, maximumFractionDigits:2}) + " €";
+    const fmtPct = v => (v * 100).toFixed(1) + "%";
+    document.getElementById("buy-total").textContent = fmtEur(d.total_buy);
+    document.getElementById("buy-unused").textContent = fmtEur(d.unused);
+    const avDev = Object.values(d.deviations).reduce((s, v) => s + Math.abs(v), 0) / Object.keys(d.deviations).length;
+    document.getElementById("buy-avgdev").textContent = fmtPct(avDev);
+    document.getElementById("buy-metrics").style.display = "";
+
+    const tbody = document.getElementById("buy-tbody");
+    tbody.innerHTML = "";
+    const allIsins = new Set([...Object.keys(d.target_weights), ...Object.keys(d.buys)]);
+    for (const isin of allIsins) {
+      const buy = d.buys[isin] ?? 0;
+      const target = d.target_weights[isin] ?? 0;
+      const after = d.new_weights[isin] ?? 0;
+      const dev = d.deviations[isin] ?? 0;
+      const name = d.names?.[isin] ?? isin;
+      const devColor = Math.abs(dev) < 0.02 ? "#4caf50" : Math.abs(dev) < 0.05 ? "#ff9800" : "#ef5350";
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td class="font-monospace small">${isin}</td><td class="small">${name}</td>
+        <td class="text-end">${buy > 0 ? `<strong style="color:#4caf50">${fmtEur(buy)}</strong>` : "—"}</td>
+        <td class="text-end">${fmtPct(target)}</td>
+        <td class="text-end">${fmtPct(after)}</td>
+        <td class="text-end" style="color:${devColor}">${dev >= 0 ? "+" : ""}${fmtPct(dev)}</td>`;
+      tbody.appendChild(tr);
+    }
+    document.getElementById("buy-table-card").style.display = "";
+
+    // Chart: target vs after
+    const isins = Object.keys(d.target_weights);
+    Plotly.newPlot("chart-target-alloc", [
+      {type: "bar", name: "Ziel", x: isins, y: isins.map(i => (d.target_weights[i] ?? 0) * 100), marker: {color: "#6c8ebf"}},
+      {type: "bar", name: "Nach Kauf", x: isins, y: isins.map(i => (d.new_weights[i] ?? 0) * 100), marker: {color: "#4caf50"}}
+    ], plotLayout("Ziel- vs. Nachkauf-Allokation (%)", {barmode: "group", yaxis: {ticksuffix: "%"}}), {responsive: true});
+    document.getElementById("buy-chart-card").style.display = "";
+  } catch(e) {
+    errDiv.textContent = "Fehler: " + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ---- Freistellungsauftrag ----
+let _lastIncome = null;
+async function updateFSA() {
+  const limit = parseFloat(document.getElementById("fsa-limit").value) || 1000;
+  const realized = parseFloat(document.getElementById("fsa-realized").value) || 0;
+
+  let annualDiv = 0;
+  if (_lastIncome) {
+    annualDiv = _lastIncome.total_annual_dividend ?? 0;
+  } else {
+    try {
+      const res = await fetch("/api/income");
+      const d = await res.json();
+      if (!d.error) { _lastIncome = d; annualDiv = d.total_annual_dividend ?? 0; }
+    } catch(e) {}
+  }
+
+  const used = realized + annualDiv;
+  const remaining = limit - used;
+  const pct = Math.min(100, (used / limit) * 100);
+  const fmtEur = v => v.toLocaleString("de-DE", {minimumFractionDigits:2, maximumFractionDigits:2}) + " €";
+
+  document.getElementById("fsa-v-limit").textContent = fmtEur(limit);
+  document.getElementById("fsa-v-realized").textContent = fmtEur(realized);
+  document.getElementById("fsa-v-div").textContent = fmtEur(annualDiv);
+  document.getElementById("fsa-v-used").textContent = fmtEur(used);
+  const remEl = document.getElementById("fsa-v-remaining");
+  remEl.textContent = fmtEur(Math.max(0, remaining));
+  remEl.style.color = remaining > 0 ? "#4caf50" : "#ef5350";
+
+  const bar = document.getElementById("fsa-bar");
+  bar.style.width = pct + "%";
+  bar.className = "progress-bar " + (pct >= 100 ? "bg-danger" : pct >= 80 ? "bg-warning" : "bg-success");
+
+  document.getElementById("fsa-note").textContent =
+    "Projektion basiert auf aktueller Dividendenrendite. Gilt nur für nicht-thesaurierende ETFs/Aktien. Realisierte Gewinne selbst eintragen.";
+  document.getElementById("fsa-cards").style.display = "";
+  document.getElementById("fsa-bar-container").style.display = "";
+}
+
+// ---- Tab lazy-load: Ziele + Overlap ----
+document.querySelectorAll('[data-bs-toggle="tab"]').forEach(btn => {
+  btn.addEventListener("shown.bs.tab", async (e) => {
+    const target = e.target.getAttribute("data-bs-target");
+    if (target === "#tab-ziele" && !zielLoaded) loadZiele();
+    if (target === "#tab-allocation" && !allocLoaded) await loadAllocation();
+  });
+});
+
+// Reset new state on portfolio reload
+const _origResetAlloc = loadAllocation;
+
+// ---- Reset helpers ----
+function resetBatch3State() {
+  risikoLoaded = false;
+  analyseLoaded = false;
+  zielLoaded = false;
+  _lastIncome = null;
+  targetWeights = {};
+  document.getElementById("insights-container").style.display = "none";
+  document.getElementById("insights-list").innerHTML = "";
+  document.getElementById("overlap-card").style.display = "none";
+}
 
 // Init
 loadPortfolio();

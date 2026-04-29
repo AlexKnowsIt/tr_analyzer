@@ -401,6 +401,74 @@ def simulate_mc_paths(
     }
 
 
+def compute_etf_overlap(price_data: pd.DataFrame) -> Dict:
+    """Pairwise correlation as overlap proxy. Returns pairs with corr ≥ 0.7."""
+    returns = price_data.pct_change().dropna()
+    corr = returns.corr()
+    tickers = list(price_data.columns)
+    n = len(tickers)
+    pairs = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            r = float(corr.iloc[i, j])
+            if r >= 0.7:
+                pairs.append({
+                    "a": tickers[i],
+                    "b": tickers[j],
+                    "correlation": round(r, 3),
+                    "level": "high" if r >= 0.9 else "medium",
+                })
+    off_diag = corr.values[np.triu_indices(n, k=1)]
+    div_score = float(1 - np.mean(off_diag)) if len(off_diag) > 0 else 1.0
+    return {
+        "tickers": tickers,
+        "pairs": sorted(pairs, key=lambda x: -x["correlation"]),
+        "diversification_score": round(div_score, 3),
+    }
+
+
+def compute_buy_recommendation(
+    current_net_values: Dict,
+    target_weights: Dict,
+    invest_amount: float,
+) -> Dict:
+    """Given current values + target weights + invest_amount, compute optimal buys (no selling)."""
+    total_current = sum(current_net_values.values())
+    total_after = total_current + invest_amount
+    w_sum = sum(target_weights.values())
+    if w_sum <= 0:
+        return {"error": "target weights sum to zero"}
+    tw = {k: v / w_sum for k, v in target_weights.items()}
+
+    target_values = {isin: tw[isin] * total_after for isin in tw}
+    buys = {
+        isin: max(0.0, target_values[isin] - current_net_values.get(isin, 0.0))
+        for isin in tw
+    }
+    buys = {k: v for k, v in buys.items() if v > 0}
+
+    total_buy = sum(buys.values())
+    if total_buy > invest_amount and total_buy > 0:
+        scale = invest_amount / total_buy
+        buys = {k: v * scale for k, v in buys.items()}
+
+    new_values = dict(current_net_values)
+    for isin, amount in buys.items():
+        new_values[isin] = new_values.get(isin, 0.0) + amount
+    new_total = sum(new_values.values())
+    new_weights = {k: v / new_total for k, v in new_values.items()}
+    deviations = {isin: new_weights.get(isin, 0.0) - tw[isin] for isin in tw}
+
+    return {
+        "buys": buys,
+        "total_buy": sum(buys.values()),
+        "unused": max(0.0, invest_amount - sum(buys.values())),
+        "new_weights": new_weights,
+        "target_weights": tw,
+        "deviations": deviations,
+    }
+
+
 def compute_risk_parity(price_data: pd.DataFrame) -> Dict:
     S = risk_models.sample_cov(price_data).values
     mu = expected_returns.mean_historical_return(price_data)
